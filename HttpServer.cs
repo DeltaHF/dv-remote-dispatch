@@ -109,6 +109,15 @@ namespace DvMod.RemoteDispatch
             case "res":
                 RenderResource(context);
                 break;
+            case "stations":
+                if (!WorldStreamingInit.Instance || !WorldStreamingInit.IsLoaded)
+                {
+                    RenderEmpty(context, 503);
+                    break;
+                }
+                Render200(context, ContentTypes.Json, JsonConvert.SerializeObject(
+                    await Updater.RunOnMainThread(() => StationData.GetStationData(context.Request.QueryString["lang"])).ConfigureAwait(false)));
+                break;
             case "track":
                 Render200(context, ContentTypes.Json, await RailTracks.GetTrackPointJSON().ConfigureAwait(false));
                 break;

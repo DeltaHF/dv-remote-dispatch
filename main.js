@@ -259,6 +259,7 @@ function jobElem(jobId, jobData) {
     startTrackCell.classList.add('interactive');
     startTrackCell.textContent = replaceHyphens(task.startTrack);
     startTrackCell.style.background = colorForYardId(yardIdForTrack(task.startTrack));
+    startTrackCell.title = stationNameForYard(yardIdForTrack(task.startTrack)) || '';
     startTrackCell.addEventListener('click', () => scrollToTrack(task.startTrack));
     row.appendChild(startTrackCell);
 
@@ -271,6 +272,7 @@ function jobElem(jobId, jobData) {
     destinationTrackCell.classList.add('interactive');
     destinationTrackCell.textContent = replaceHyphens(task.destinationTrack);
     destinationTrackCell.style.background = colorForYardId(yardIdForTrack(task.destinationTrack));
+    destinationTrackCell.title = stationNameForYard(yardIdForTrack(task.destinationTrack)) || '';
     destinationTrackCell.addEventListener('click', () => scrollToTrack(task.destinationTrack));
     row.appendChild(destinationTrackCell);
 
@@ -448,6 +450,61 @@ const tracksReady = fetch(new URL('/track', location))
       createTrackLabels(trackId, coords)
   });
 });
+
+/////////////////////
+// stations
+
+let stationData = {};
+const stationLabelMarkers = [];
+const languageDropdown = document.getElementById('languageDropdown');
+const stationNamesCheckbox = document.getElementById('stationNamesCheckbox');
+
+function stationNameForYard(yardId) {
+  return stationData[yardId] ? stationData[yardId].name : undefined;
+}
+
+function updateStationLabels() {
+  for (const marker of stationLabelMarkers)
+    marker.remove();
+  stationLabelMarkers.length = 0;
+  if (!stationNamesCheckbox.checked)
+    return;
+  Object.values(stationData).forEach(data => {
+    stationLabelMarkers.push(L.marker(data.position, {
+      interactive: false,
+      icon: L.divIcon({ className: 'stationLabel', html: data.name, iconSize: null }),
+    }).addTo(map));
+  });
+}
+
+function populateLanguageDropdown(languages) {
+  if (languageDropdown.childElementCount > 1)
+    return;
+  for (const language of languages) {
+    const option = document.createElement('option');
+    option.setAttribute('value', language);
+    option.textContent = language;
+    languageDropdown.appendChild(option);
+  }
+}
+
+function fetchStations() {
+  const language = languageDropdown.value;
+  const url = language ? `/stations?lang=${encodeURIComponent(language)}` : '/stations';
+  return fetch(new URL(url, location))
+  .then(resp => resp.json())
+  .then(data => {
+    stationData = data.stations;
+    populateLanguageDropdown(data.languages);
+    updateStationLabels();
+    updateJobList();
+  });
+}
+
+languageDropdown.addEventListener('input', fetchStations);
+stationNamesCheckbox.addEventListener('change', updateStationLabels);
+
+tracksReady.then(() => fetchStations().catch(() => {}));
 
 /////////////////////
 // junctions
