@@ -42,5 +42,6 @@
     <EmbeddedResource Include="licenses/*.png"/>
     <EmbeddedResource Include="main.js"/>
     <EmbeddedResource Include="style.css"/>
+    <EmbeddedResource Include="worldmap.jpg"/>
   </ItemGroup>
 </Project>

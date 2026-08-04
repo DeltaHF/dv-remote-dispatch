@@ -280,6 +280,7 @@ namespace DvMod.RemoteDispatch
             public const string Html = "text/html; charset=UTF-8";
             public const string Json = "application/json";
             public const string Javascript = "application/javascript";
+            public const string Jpeg = "image/jpeg";
             public const string Png = "image/png";
             public const string Svg = "image/svg+xml";
 
@@ -290,6 +291,8 @@ namespace DvMod.RemoteDispatch
                     ".css" => Css,
                     ".js" => Javascript,
                     ".json" => Json,
+                    ".jpg" => Jpeg,
+                    ".jpeg" => Jpeg,
                     ".png" => Png,
                     ".svg" => Svg,
                     _ => "",

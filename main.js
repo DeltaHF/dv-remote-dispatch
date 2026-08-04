@@ -15,6 +15,45 @@ const map = L.map('map', {
   zoomControl: false,
 })
 .fitBounds(mapBounds);
+
+/////////////////////
+// world map background
+
+const worldMapConfig = {
+  url: 'res/worldmap.jpg',
+  bounds: [[0, 0], [0.15, 0.15]],
+  opacity: 0.5,
+};
+
+{
+  const params = new URLSearchParams(location.search);
+  const boundsParam = params.get('mapbounds');
+  if (boundsParam) {
+    const parts = boundsParam.split(',').map(Number);
+    if (parts.length == 4 && parts.every(Number.isFinite))
+      worldMapConfig.bounds = [[parts[0], parts[1]], [parts[2], parts[3]]];
+  }
+  const opacityParam = Number(params.get('mapopacity'));
+  if (Number.isFinite(opacityParam) && opacityParam >= 0 && opacityParam <= 1)
+    worldMapConfig.opacity = opacityParam;
+}
+
+const worldMapOverlay = L.imageOverlay(worldMapConfig.url, worldMapConfig.bounds, {
+  interactive: false,
+  opacity: worldMapConfig.opacity,
+}).addTo(map);
+
+document.getElementById('mapBackgroundCheckbox').checked = worldMapOverlay.getOpacity() > 0;
+document.getElementById('mapOpacityInput').value = worldMapOverlay.getOpacity() * 100;
+document.getElementById('mapBackgroundCheckbox').addEventListener('change', e => {
+  if (e.target.checked)
+    worldMapOverlay.addTo(map);
+  else
+    worldMapOverlay.remove();
+});
+document.getElementById('mapOpacityInput').addEventListener('input', e => {
+  worldMapOverlay.setOpacity(e.target.value / 100);
+});
 L.control.scale().addTo(map);
 const zoomHome = new L.Control.ZoomHome({
   position: 'topleft',
