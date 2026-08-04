@@ -3,6 +3,40 @@ const earthCircumference = 40e6;
 const metersToDegrees = 360 / earthCircumference;
 
 /////////////////////
+// settings store
+
+const defaultSettings = {
+  playerSize: 1,
+  playerColor: '',
+  trackWidth: 3,
+  stationFontSize: 14,
+  stationColor: '#ffffff',
+};
+const settings = { ...defaultSettings };
+
+function loadLocalSettings() {
+  try {
+    const stored = JSON.parse(localStorage.getItem('rdSettings') || '{}');
+    Object.assign(settings, stored);
+  } catch (e) {}
+}
+
+function saveSettings() {
+  localStorage.setItem('rdSettings', JSON.stringify(settings));
+}
+
+const configReady = fetch(new URL('/config', location))
+.then(resp => resp.json())
+.catch(() => ({}))
+.then(config => {
+  if (config.defaults)
+    Object.assign(settings, config.defaults);
+  loadLocalSettings();
+  createWorldMapOverlay(config.worldMap);
+  initSettingsUI();
+});
+
+/////////////////////
 // map
 
 const canvasRenderer = L.canvas();
@@ -15,6 +49,8 @@ const map = L.map('map', {
   zoomControl: false,
 })
 .fitBounds(mapBounds);
+map.createPane('worldMapPane');
+map.getPane('worldMapPane').style.zIndex = 1;
 
 /////////////////////
 // world map background
@@ -25,7 +61,15 @@ const worldMapConfig = {
   opacity: 0.5,
 };
 
-{
+let worldMapOverlay;
+
+function createWorldMapOverlay(worldMap) {
+  if (worldMap) {
+    if (Array.isArray(worldMap.bounds) && worldMap.bounds.length == 2)
+      worldMapConfig.bounds = worldMap.bounds;
+    if (Number.isFinite(worldMap.opacity) && worldMap.opacity >= 0 && worldMap.opacity <= 1)
+      worldMapConfig.opacity = worldMap.opacity;
+  }
   const params = new URLSearchParams(location.search);
   const boundsParam = params.get('mapbounds');
   if (boundsParam) {
@@ -36,24 +80,109 @@ const worldMapConfig = {
   const opacityParam = Number(params.get('mapopacity'));
   if (Number.isFinite(opacityParam) && opacityParam >= 0 && opacityParam <= 1)
     worldMapConfig.opacity = opacityParam;
+
+  worldMapOverlay = L.imageOverlay(worldMapConfig.url, worldMapConfig.bounds, {
+    interactive: false,
+    opacity: worldMapConfig.opacity,
+    pane: 'worldMapPane',
+  }).addTo(map);
+
+  const backgroundCheckbox = document.getElementById('mapBackgroundCheckbox');
+  const opacityInput = document.getElementById('mapOpacityInput');
+  backgroundCheckbox.checked = true;
+  opacityInput.value = worldMapOverlay.getOpacity() * 100;
+  backgroundCheckbox.addEventListener('change', e => {
+    if (e.target.checked)
+      worldMapOverlay.addTo(map);
+    else
+      worldMapOverlay.remove();
+  });
+  opacityInput.addEventListener('input', e => {
+    worldMapOverlay.setOpacity(e.target.value / 100);
+  });
 }
 
-const worldMapOverlay = L.imageOverlay(worldMapConfig.url, worldMapConfig.bounds, {
-  interactive: false,
-  opacity: worldMapConfig.opacity,
-}).addTo(map);
+/////////////////////
+// settings UI
 
-document.getElementById('mapBackgroundCheckbox').checked = worldMapOverlay.getOpacity() > 0;
-document.getElementById('mapOpacityInput').value = worldMapOverlay.getOpacity() * 100;
-document.getElementById('mapBackgroundCheckbox').addEventListener('change', e => {
-  if (e.target.checked)
-    worldMapOverlay.addTo(map);
-  else
-    worldMapOverlay.remove();
-});
-document.getElementById('mapOpacityInput').addEventListener('input', e => {
-  worldMapOverlay.setOpacity(e.target.value / 100);
-});
+function applyPlayerSettings() {
+  if (!Object.keys(lastPlayerData).length)
+    return;
+  updatePlayerOverlays(lastPlayerData);
+  playerMarkers.forEach((marker, id) => {
+    const color = getPlayerColor(lastPlayerData[id]);
+    if (!color)
+      return;
+    const el = marker.getElement();
+    el.querySelector('polygon')?.setAttribute('fill', color);
+    const text = el.querySelector('text');
+    if (text)
+      text.setAttribute('fill', color);
+  });
+}
+
+function applyTrackSettings() {
+  trackPolyLines.forEach(polyline => polyline.setStyle({ weight: settings.trackWidth }));
+}
+
+function applyStationLabelSettings() {
+  const mapEl = document.getElementById('map');
+  mapEl.style.setProperty('--station-font-size', `${settings.stationFontSize}px`);
+  mapEl.style.setProperty('--station-color', settings.stationColor);
+}
+
+function initSettingsUI() {
+  const playerSizeInput = document.getElementById('playerSizeInput');
+  playerSizeInput.value = settings.playerSize;
+  playerSizeInput.addEventListener('input', e => {
+    settings.playerSize = Number(e.target.value);
+    saveSettings();
+    applyPlayerSettings();
+  });
+
+  const playerColorInput = document.getElementById('playerColorInput');
+  const playerColorAuto = document.getElementById('playerColorAutoCheckbox');
+  playerColorAuto.checked = !settings.playerColor;
+  if (settings.playerColor)
+    playerColorInput.value = settings.playerColor;
+  playerColorAuto.addEventListener('change', () => {
+    settings.playerColor = playerColorAuto.checked ? '' : playerColorInput.value;
+    saveSettings();
+    applyPlayerSettings();
+  });
+  playerColorInput.addEventListener('input', () => {
+    playerColorAuto.checked = false;
+    settings.playerColor = playerColorInput.value;
+    saveSettings();
+    applyPlayerSettings();
+  });
+
+  const trackWidthInput = document.getElementById('trackWidthInput');
+  trackWidthInput.value = settings.trackWidth;
+  trackWidthInput.addEventListener('input', e => {
+    settings.trackWidth = Number(e.target.value);
+    saveSettings();
+    applyTrackSettings();
+  });
+
+  const stationFontSizeInput = document.getElementById('stationFontSizeInput');
+  stationFontSizeInput.value = settings.stationFontSize;
+  stationFontSizeInput.addEventListener('input', e => {
+    settings.stationFontSize = Number(e.target.value);
+    saveSettings();
+    applyStationLabelSettings();
+  });
+
+  const stationColorInput = document.getElementById('stationColorInput');
+  stationColorInput.value = settings.stationColor;
+  stationColorInput.addEventListener('input', e => {
+    settings.stationColor = e.target.value;
+    saveSettings();
+    applyStationLabelSettings();
+  });
+
+  applyStationLabelSettings();
+}
 L.control.scale().addTo(map);
 const zoomHome = new L.Control.ZoomHome({
   position: 'topleft',
@@ -264,7 +393,7 @@ function jobElem(jobId, jobData) {
     row.appendChild(startTrackCell);
 
     const arrowCell = document.createElement('th');
-    arrowCell.textContent = "\u279C";
+    arrowCell.textContent = "➜";
     arrowCell.classList.add('jobList-trackSeparator');
     row.appendChild(arrowCell);
 
@@ -435,13 +564,15 @@ function createTrackLabels(trackId, coords) {
   }
 }
 
-const tracksReady = fetch(new URL('/track', location))
+const tracksReady = configReady
+.then(() => fetch(new URL('/track', location)))
 .then(resp => resp.json())
 .then(tracks => {
   Object.entries(tracks).forEach(([trackId, coords]) => {
     const isSiding = !trackId.includes('#');
     const polyline = L.polyline(coords, {
       color: isSiding ? 'slategray' : 'lightsteelblue',
+      weight: settings.trackWidth,
       interactive: false,
       renderer: canvasRenderer,
     }).addTo(map);
@@ -610,13 +741,19 @@ function followCar(carId, shouldScroll) {
 // player
 
 const playerMarkers = new Map();
+let lastPlayerData = {};
+
+function getPlayerColor(playerData) {
+  return settings.playerColor || (playerData && playerData.color);
+}
 
 function getPlayerOverlayBounds(position) {
-  const size = metersToDegrees * 2;
+  const size = metersToDegrees * 2 * settings.playerSize;
   return [ [ position[0] - size, position[1] - size], [position[0] + size, position[1] + size] ];
 }
 
 function updatePlayerOverlays(data) {
+  lastPlayerData = data;
   const existingPlayerIds = Array.from(playerMarkers.keys());
   // Remove markers from disconnected players
   existingPlayerIds
@@ -643,12 +780,13 @@ function removePlayerOverlay(id) {
 }
 
 function createPlayerOverlay(id, playerData) {
+  const color = getPlayerColor(playerData);
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '-15 -15 30 30');
   svg.setAttribute('overflow', 'visible');
   const polygon = document.createElementNS(svg.namespaceURI, 'polygon');
   polygon.setAttribute('id', `playerPolygon-${id}`);
-  polygon.setAttribute('fill', playerData.color);
+  polygon.setAttribute('fill', color);
   polygon.setAttribute('fill-opacity', '70%');
   polygon.setAttribute('stroke', 'black');
   polygon.setAttribute('stroke-width', '1%');
@@ -661,7 +799,7 @@ function createPlayerOverlay(id, playerData) {
     text.setAttribute('font-family', 'Arial');
     text.setAttribute('font-weight', 'bold');
     text.setAttribute('font-size', '10');
-    text.setAttribute('fill', playerData.color);
+    text.setAttribute('fill', color);
     text.setAttribute('stroke', 'black');
     text.setAttribute('stroke-width', '0.5px');
     text.setAttribute('paint-order', 'stroke');

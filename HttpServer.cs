@@ -90,6 +90,9 @@ namespace DvMod.RemoteDispatch
             case "car":
                 HandleCarRequest(context);
                 break;
+            case "config":
+                Render200(context, ContentTypes.Json, WebConfig.GetConfigJson());
+                break;
             case "job":
                 Render200(context, ContentTypes.Json, JobData.GetAllJobDataJson());
                 break;
