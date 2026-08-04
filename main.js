@@ -549,6 +549,7 @@ function removePlayerOverlay(id) {
 function createPlayerOverlay(id, playerData) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '-15 -15 30 30');
+  svg.setAttribute('overflow', 'visible');
   const polygon = document.createElementNS(svg.namespaceURI, 'polygon');
   polygon.setAttribute('id', `playerPolygon-${id}`);
   polygon.setAttribute('fill', playerData.color);
@@ -557,6 +558,20 @@ function createPlayerOverlay(id, playerData) {
   polygon.setAttribute('stroke-width', '1%');
   polygon.setAttribute('points', '0,-10 10,10 0,5 -10,10');
   svg.appendChild(polygon);
+  if (playerData.displayName) {
+    const text = document.createElementNS(svg.namespaceURI, 'text');
+    text.setAttribute('y', '24');
+    text.setAttribute('text-anchor', 'middle');
+    text.setAttribute('font-family', 'Arial');
+    text.setAttribute('font-weight', 'bold');
+    text.setAttribute('font-size', '10');
+    text.setAttribute('fill', playerData.color);
+    text.setAttribute('stroke', 'black');
+    text.setAttribute('stroke-width', '0.5px');
+    text.setAttribute('paint-order', 'stroke');
+    text.textContent = playerData.displayName;
+    svg.appendChild(text);
+  }
   return svg;
 }
 

@@ -23,6 +23,7 @@
     <Reference Include="DV.ThingTypes"/>
     <Reference Include="DV.Utils"/>
     <Reference Include="Microsoft.CSharp"/>
+    <Reference Include="MultiplayerAPI"/>
     <Reference Include="Newtonsoft.Json"/>
     <Reference Include="net.smkd.vector3d"/>
     <Reference Include="WorldStreamer" />
