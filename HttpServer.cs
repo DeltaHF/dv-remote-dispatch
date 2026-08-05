@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 using System;
 using UnityEngine;
 
-namespace DvMod.RemoteDispatch
+namespace DvMod.RemoteDispatch_BT
 {
     public class HttpServer : MonoBehaviour
     {
@@ -90,6 +90,9 @@ namespace DvMod.RemoteDispatch
             case "car":
                 HandleCarRequest(context);
                 break;
+            case "config":
+                Render200(context, ContentTypes.Json, WebConfig.GetConfigJson());
+                break;
             case "job":
                 Render200(context, ContentTypes.Json, JobData.GetAllJobDataJson());
                 break;
@@ -108,6 +111,15 @@ namespace DvMod.RemoteDispatch
                 break;
             case "res":
                 RenderResource(context);
+                break;
+            case "stations":
+                if (!WorldStreamingInit.Instance || !WorldStreamingInit.IsLoaded)
+                {
+                    RenderEmpty(context, 503);
+                    break;
+                }
+                Render200(context, ContentTypes.Json, JsonConvert.SerializeObject(
+                    await Updater.RunOnMainThread(() => StationData.GetStationData(context.Request.QueryString["lang"])).ConfigureAwait(false)));
                 break;
             case "track":
                 Render200(context, ContentTypes.Json, await RailTracks.GetTrackPointJSON().ConfigureAwait(false));
@@ -280,6 +292,7 @@ namespace DvMod.RemoteDispatch
             public const string Html = "text/html; charset=UTF-8";
             public const string Json = "application/json";
             public const string Javascript = "application/javascript";
+            public const string Jpeg = "image/jpeg";
             public const string Png = "image/png";
             public const string Svg = "image/svg+xml";
 
@@ -290,6 +303,8 @@ namespace DvMod.RemoteDispatch
                     ".css" => Css,
                     ".js" => Javascript,
                     ".json" => Json,
+                    ".jpg" => Jpeg,
+                    ".jpeg" => Jpeg,
                     ".png" => Png,
                     ".svg" => Svg,
                     _ => "",

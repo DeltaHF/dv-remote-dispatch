@@ -9,7 +9,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System;
 
-namespace DvMod.RemoteDispatch
+namespace DvMod.RemoteDispatch_BT
 {
     public static class JobData
     {

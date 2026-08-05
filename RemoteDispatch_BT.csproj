@@ -3,7 +3,7 @@
     <TargetFramework>netstandard2.0</TargetFramework>
     <LangVersion>8.0</LangVersion>
     <Nullable>enable</Nullable>
-    <RootNamespace>DvMod.RemoteDispatch</RootNamespace>
+    <RootNamespace>DvMod.RemoteDispatch_BT</RootNamespace>
     <InformationalVersion>1.2.1</InformationalVersion>
   </PropertyGroup>
 
@@ -18,13 +18,17 @@
     <Reference Include="DV.Simulation"/>
     <Reference Include="DV.Common"/>
     <Reference Include="DV.Interaction"/>
+    <Reference Include="DV.Localization"/>
     <Reference Include="DV.PointSet"/>
     <Reference Include="DV.RailTrack" />
     <Reference Include="DV.ThingTypes"/>
     <Reference Include="DV.Utils"/>
+    <Reference Include="I2.Localization"/>
     <Reference Include="Microsoft.CSharp"/>
+    <Reference Include="MultiplayerAPI"/>
     <Reference Include="Newtonsoft.Json"/>
     <Reference Include="net.smkd.vector3d"/>
+    <Reference Include="PassengerJobs"/>
     <Reference Include="WorldStreamer" />
   </ItemGroup>
 
@@ -41,5 +45,6 @@
     <EmbeddedResource Include="licenses/*.png"/>
     <EmbeddedResource Include="main.js"/>
     <EmbeddedResource Include="style.css"/>
+    <EmbeddedResource Include="worldmap.jpg"/>
   </ItemGroup>
 </Project>

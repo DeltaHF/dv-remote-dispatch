@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace DvMod.RemoteDispatch
+namespace DvMod.RemoteDispatch_BT
 {
     public class AsyncSet<T>
     {

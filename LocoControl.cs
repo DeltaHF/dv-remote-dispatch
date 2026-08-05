@@ -2,7 +2,7 @@ using DV.RemoteControls;
 using System.Collections.Specialized;
 using UnityEngine;
 
-namespace DvMod.RemoteDispatch
+namespace DvMod.RemoteDispatch_BT
 {
     public static class LocoControl
     {

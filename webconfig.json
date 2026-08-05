@@ -1,0 +1,13 @@
+{
+  "worldMap": {
+    "bounds": [[0, 0], [0.15, 0.15]],
+    "opacity": 0.5
+  },
+  "defaults": {
+    "playerSize": 1,
+    "playerColor": "#0000ff",
+    "trackWidth": 3,
+    "stationFontSize": 14,
+    "stationColor": "#ffffff"
+  }
+}

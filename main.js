@@ -3,6 +3,47 @@ const earthCircumference = 40e6;
 const metersToDegrees = 360 / earthCircumference;
 
 /////////////////////
+// settings store
+
+const defaultSettings = {
+  playerSize: 1,
+  playerColor: '',
+  trackWidth: 3,
+  stationFontSize: 14,
+  stationColor: '#ffffff',
+  passengerStationColor: '#ffd24a',
+  militaryStationColor: '#ff5252',
+  mapOffsetX: 0,
+  mapOffsetY: 0,
+  mapScale: 100,
+  showMapBackground: true,
+  showStationNames: true,
+};
+const settings = { ...defaultSettings };
+
+function loadLocalSettings() {
+  try {
+    const stored = JSON.parse(localStorage.getItem('rdSettings') || '{}');
+    Object.assign(settings, stored);
+  } catch (e) {}
+}
+
+function saveSettings() {
+  localStorage.setItem('rdSettings', JSON.stringify(settings));
+}
+
+const configReady = fetch(new URL('/config', location))
+.then(resp => resp.json())
+.catch(() => ({}))
+.then(config => {
+  if (config.defaults)
+    Object.assign(settings, config.defaults);
+  loadLocalSettings();
+  createWorldMapOverlay(config.worldMap);
+  initSettingsUI();
+});
+
+/////////////////////
 // map
 
 const canvasRenderer = L.canvas();
@@ -15,6 +56,217 @@ const map = L.map('map', {
   zoomControl: false,
 })
 .fitBounds(mapBounds);
+map.createPane('worldMapPane');
+map.getPane('worldMapPane').style.zIndex = 1;
+
+/////////////////////
+// world map background
+
+const worldMapConfig = {
+  url: 'res/worldmap.jpg',
+  bounds: [[0, 0], [0.15, 0.15]],
+  opacity: 0.5,
+};
+
+let worldMapOverlay;
+
+function createWorldMapOverlay(worldMap) {
+  if (worldMap) {
+    if (Array.isArray(worldMap.bounds) && worldMap.bounds.length == 2)
+      worldMapConfig.bounds = worldMap.bounds;
+    if (Number.isFinite(worldMap.opacity) && worldMap.opacity >= 0 && worldMap.opacity <= 1)
+      worldMapConfig.opacity = worldMap.opacity;
+  }
+  const params = new URLSearchParams(location.search);
+  const boundsParam = params.get('mapbounds');
+  if (boundsParam) {
+    const parts = boundsParam.split(',').map(Number);
+    if (parts.length == 4 && parts.every(Number.isFinite))
+      worldMapConfig.bounds = [[parts[0], parts[1]], [parts[2], parts[3]]];
+  }
+  const opacityParam = Number(params.get('mapopacity'));
+  if (Number.isFinite(opacityParam) && opacityParam >= 0 && opacityParam <= 1)
+    worldMapConfig.opacity = opacityParam;
+
+  worldMapConfig.baseBounds = worldMapConfig.bounds;
+
+  worldMapOverlay = L.imageOverlay(worldMapConfig.url, effectiveWorldMapBounds(), {
+    interactive: false,
+    opacity: worldMapConfig.opacity,
+    pane: 'worldMapPane',
+  });
+  if (settings.showMapBackground)
+    worldMapOverlay.addTo(map);
+
+  const backgroundCheckbox = document.getElementById('mapBackgroundCheckbox');
+  const opacityInput = document.getElementById('mapOpacityInput');
+  backgroundCheckbox.checked = settings.showMapBackground;
+  opacityInput.value = worldMapConfig.opacity * 100;
+  backgroundCheckbox.addEventListener('change', e => {
+    settings.showMapBackground = e.target.checked;
+    saveSettings();
+    if (e.target.checked)
+      worldMapOverlay.addTo(map);
+    else
+      worldMapOverlay.remove();
+  });
+  opacityInput.addEventListener('input', e => {
+    worldMapOverlay.setOpacity(e.target.value / 100);
+  });
+}
+
+function effectiveWorldMapBounds() {
+  const base = worldMapConfig.baseBounds;
+  const factor = settings.mapScale / 100;
+  const centerLat = (base[0][0] + base[1][0]) / 2;
+  const centerLng = (base[0][1] + base[1][1]) / 2;
+  const halfLat = (base[1][0] - base[0][0]) / 2 * factor;
+  const halfLng = (base[1][1] - base[0][1]) / 2 * factor;
+  const dLat = settings.mapOffsetY * metersToDegrees;
+  const dLng = settings.mapOffsetX * metersToDegrees;
+  return [
+    [centerLat - halfLat + dLat, centerLng - halfLng + dLng],
+    [centerLat + halfLat + dLat, centerLng + halfLng + dLng],
+  ];
+}
+
+/////////////////////
+// settings UI
+
+let appliedPlayerSize;
+
+function applyPlayerSettings() {
+  if (!Object.keys(lastPlayerData).length)
+    return;
+  if (appliedPlayerSize !== settings.playerSize) {
+    appliedPlayerSize = settings.playerSize;
+    Array.from(playerMarkers.keys()).forEach(id => removePlayerOverlay(id));
+    updatePlayerOverlays(lastPlayerData);
+  }
+  playerMarkers.forEach((marker, id) => {
+    const color = getPlayerColor(lastPlayerData[id]);
+    if (!color)
+      return;
+    const el = marker.getElement();
+    if (!el)
+      return;
+    el.querySelector('polygon')?.setAttribute('fill', color);
+    const name = el.querySelector('.playerName');
+    if (name)
+      name.style.color = color;
+  });
+}
+
+function applyTrackSettings() {
+  trackPolyLines.forEach(polyline => polyline.setStyle({ weight: settings.trackWidth }));
+}
+
+function applyStationLabelSettings() {
+  const mapEl = document.getElementById('map');
+  mapEl.style.setProperty('--station-font-size', `${settings.stationFontSize}px`);
+  mapEl.style.setProperty('--station-color', settings.stationColor);
+  mapEl.style.setProperty('--station-color-passenger', settings.passengerStationColor);
+  mapEl.style.setProperty('--station-color-military', settings.militaryStationColor);
+  layoutStationLabels();
+}
+
+function initSettingsUI() {
+  const playerSizeInput = document.getElementById('playerSizeInput');
+  playerSizeInput.value = settings.playerSize;
+  playerSizeInput.addEventListener('input', e => {
+    settings.playerSize = Number(e.target.value);
+    saveSettings();
+    applyPlayerSettings();
+  });
+
+  const playerColorInput = document.getElementById('playerColorInput');
+  const playerColorAuto = document.getElementById('playerColorAutoCheckbox');
+  playerColorAuto.checked = !settings.playerColor;
+  if (settings.playerColor)
+    playerColorInput.value = settings.playerColor;
+  playerColorAuto.addEventListener('change', () => {
+    settings.playerColor = playerColorAuto.checked ? '' : playerColorInput.value;
+    saveSettings();
+    applyPlayerSettings();
+  });
+  playerColorInput.addEventListener('input', () => {
+    playerColorAuto.checked = false;
+    settings.playerColor = playerColorInput.value;
+    saveSettings();
+    applyPlayerSettings();
+  });
+
+  const trackWidthInput = document.getElementById('trackWidthInput');
+  trackWidthInput.value = settings.trackWidth;
+  trackWidthInput.addEventListener('input', e => {
+    settings.trackWidth = Number(e.target.value);
+    saveSettings();
+    applyTrackSettings();
+  });
+
+  const stationFontSizeInput = document.getElementById('stationFontSizeInput');
+  stationFontSizeInput.value = settings.stationFontSize;
+  stationFontSizeInput.addEventListener('input', e => {
+    settings.stationFontSize = Number(e.target.value);
+    saveSettings();
+    applyStationLabelSettings();
+  });
+
+  const stationColorInput = document.getElementById('stationColorInput');
+  stationColorInput.value = settings.stationColor;
+  stationColorInput.addEventListener('input', e => {
+    settings.stationColor = e.target.value;
+    saveSettings();
+    applyStationLabelSettings();
+  });
+
+  const passengerStationColorInput = document.getElementById('passengerStationColorInput');
+  passengerStationColorInput.value = settings.passengerStationColor;
+  passengerStationColorInput.addEventListener('input', e => {
+    settings.passengerStationColor = e.target.value;
+    saveSettings();
+    applyStationLabelSettings();
+  });
+
+  const militaryStationColorInput = document.getElementById('militaryStationColorInput');
+  militaryStationColorInput.value = settings.militaryStationColor;
+  militaryStationColorInput.addEventListener('input', e => {
+    settings.militaryStationColor = e.target.value;
+    saveSettings();
+    applyStationLabelSettings();
+  });
+
+  const mapOffsetXInput = document.getElementById('mapOffsetXInput');
+  mapOffsetXInput.value = settings.mapOffsetX;
+  mapOffsetXInput.addEventListener('input', e => {
+    settings.mapOffsetX = Number(e.target.value) || 0;
+    saveSettings();
+    worldMapOverlay.setBounds(effectiveWorldMapBounds());
+  });
+
+  const mapOffsetYInput = document.getElementById('mapOffsetYInput');
+  mapOffsetYInput.value = settings.mapOffsetY;
+  mapOffsetYInput.addEventListener('input', e => {
+    settings.mapOffsetY = Number(e.target.value) || 0;
+    saveSettings();
+    worldMapOverlay.setBounds(effectiveWorldMapBounds());
+  });
+
+  const mapScaleInput = document.getElementById('mapScaleInput');
+  mapScaleInput.value = settings.mapScale;
+  mapScaleInput.addEventListener('input', e => {
+    const value = Number(e.target.value);
+    if (!Number.isFinite(value) || value <= 0)
+      return;
+    settings.mapScale = value;
+    saveSettings();
+    worldMapOverlay.setBounds(effectiveWorldMapBounds());
+  });
+
+  stationNamesCheckbox.checked = settings.showStationNames;
+
+  applyStationLabelSettings();
+}
 L.control.scale().addTo(map);
 const zoomHome = new L.Control.ZoomHome({
   position: 'topleft',
@@ -33,9 +285,13 @@ map.on('zoomanim', () => {
     map.fitBounds(map.getBounds());
 });
 
+function getMarkerCenter(marker) {
+  return marker.getLatLng ? marker.getLatLng() : marker.getBounds().getCenter();
+}
+
 function setMarkerToFollow(marker) {
   markerToFollow = marker;
-  map.panTo(marker.getBounds().getCenter());
+  map.panTo(getMarkerCenter(marker));
 }
 
 function stopFollowing() {
@@ -44,8 +300,9 @@ function stopFollowing() {
 
 function zoomToAllPlayers() {
   const bounds = new L.LatLngBounds();
-  playerMarkers.forEach(marker => bounds.extend(marker.getBounds()));
-  map.fitBounds(bounds, { maxZoom: initialZoom });
+  playerMarkers.forEach(marker => bounds.extend(marker.getLatLng()));
+  if (bounds.isValid())
+    map.fitBounds(bounds, { maxZoom: initialZoom });
 }
 
 map.addEventListener('zoomhome', () => {
@@ -220,11 +477,12 @@ function jobElem(jobId, jobData) {
     startTrackCell.classList.add('interactive');
     startTrackCell.textContent = replaceHyphens(task.startTrack);
     startTrackCell.style.background = colorForYardId(yardIdForTrack(task.startTrack));
+    startTrackCell.title = stationNameForYard(yardIdForTrack(task.startTrack)) || '';
     startTrackCell.addEventListener('click', () => scrollToTrack(task.startTrack));
     row.appendChild(startTrackCell);
 
     const arrowCell = document.createElement('th');
-    arrowCell.textContent = "\u279C";
+    arrowCell.textContent = "➜";
     arrowCell.classList.add('jobList-trackSeparator');
     row.appendChild(arrowCell);
 
@@ -232,6 +490,7 @@ function jobElem(jobId, jobData) {
     destinationTrackCell.classList.add('interactive');
     destinationTrackCell.textContent = replaceHyphens(task.destinationTrack);
     destinationTrackCell.style.background = colorForYardId(yardIdForTrack(task.destinationTrack));
+    destinationTrackCell.title = stationNameForYard(yardIdForTrack(task.destinationTrack)) || '';
     destinationTrackCell.addEventListener('click', () => scrollToTrack(task.destinationTrack));
     row.appendChild(destinationTrackCell);
 
@@ -394,13 +653,15 @@ function createTrackLabels(trackId, coords) {
   }
 }
 
-const tracksReady = fetch(new URL('/track', location))
+const tracksReady = configReady
+.then(() => fetch(new URL('/track', location)))
 .then(resp => resp.json())
 .then(tracks => {
   Object.entries(tracks).forEach(([trackId, coords]) => {
     const isSiding = !trackId.includes('#');
     const polyline = L.polyline(coords, {
       color: isSiding ? 'slategray' : 'lightsteelblue',
+      weight: settings.trackWidth,
       interactive: false,
       renderer: canvasRenderer,
     }).addTo(map);
@@ -409,6 +670,115 @@ const tracksReady = fetch(new URL('/track', location))
       createTrackLabels(trackId, coords)
   });
 });
+
+/////////////////////
+// stations
+
+let stationData = {};
+const stationLabelMarkers = [];
+const languageDropdown = document.getElementById('languageDropdown');
+const stationNamesCheckbox = document.getElementById('stationNamesCheckbox');
+
+function stationNameForYard(yardId) {
+  return stationData[yardId] ? stationData[yardId].name : undefined;
+}
+
+function updateStationLabels() {
+  for (const marker of stationLabelMarkers)
+    marker.remove();
+  stationLabelMarkers.length = 0;
+  if (!stationNamesCheckbox.checked)
+    return;
+  Object.entries(stationData).forEach(([yardId, data]) => {
+    const text = document.createElement('span');
+    text.className = 'stationLabelText';
+    text.textContent = `[${yardId}] ${data.name}`;
+    stationLabelMarkers.push(L.marker(data.position, {
+      interactive: false,
+      icon: L.divIcon({ className: 'stationLabel' + (data.type ? ' ' + data.type : ''), html: text, iconSize: null }),
+    }).addTo(map));
+  });
+  layoutStationLabels();
+}
+
+function rectsIntersect(a, b) {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+function layoutStationLabels() {
+  const lineHeight = settings.stationFontSize;
+  const labels = [];
+  for (const marker of stationLabelMarkers) {
+    const el = marker.getElement();
+    const text = el && el.querySelector('.stationLabelText');
+    if (!text)
+      continue;
+    text.style.transform = '';
+    const point = map.latLngToContainerPoint(marker.getLatLng());
+    const width = text.offsetWidth || text.textContent.length * lineHeight * 0.6;
+    labels.push({ text, x: point.x, y: point.y, width });
+  }
+  labels.sort((a, b) => (a.y - b.y) || (a.x - b.x));
+  const placed = [];
+  for (const label of labels) {
+    let offsetY = 0;
+    for (let row = 0; row < 20; row++) {
+      const rect = {
+        left: label.x - 2,
+        top: label.y + offsetY - 2,
+        right: label.x + label.width + 2,
+        bottom: label.y + offsetY + lineHeight + 2,
+      };
+      if (!placed.some(other => rectsIntersect(rect, other)))
+        break;
+      offsetY += lineHeight;
+    }
+    placed.push({
+      left: label.x - 2,
+      top: label.y + offsetY - 2,
+      right: label.x + label.width + 2,
+      bottom: label.y + offsetY + lineHeight + 2,
+    });
+    if (offsetY > 0)
+      label.text.style.transform = `translateY(${offsetY}px)`;
+  }
+}
+
+map.on('zoomend', layoutStationLabels);
+map.on('resize', layoutStationLabels);
+
+function populateLanguageDropdown(languages) {
+  if (languageDropdown.childElementCount > 1)
+    return;
+  for (const language of languages) {
+    const option = document.createElement('option');
+    option.setAttribute('value', language);
+    option.textContent = language;
+    languageDropdown.appendChild(option);
+  }
+}
+
+function fetchStations() {
+  const language = languageDropdown.value;
+  const url = language ? `/stations?lang=${encodeURIComponent(language)}` : '/stations';
+  return fetch(new URL(url, location))
+  .then(resp => resp.json())
+  .then(data => {
+    stationData = data.stations;
+    populateLanguageDropdown(data.languages);
+    updateStationLabels();
+    updateJobList();
+  });
+}
+
+languageDropdown.addEventListener('input', fetchStations);
+stationNamesCheckbox.addEventListener('change', e => {
+  settings.showStationNames = e.target.checked;
+  saveSettings();
+  updateStationLabels();
+});
+
+tracksReady.then(() => fetchStations().catch(() => {}));
 
 /////////////////////
 // junctions
@@ -514,13 +884,14 @@ function followCar(carId, shouldScroll) {
 // player
 
 const playerMarkers = new Map();
+let lastPlayerData = {};
 
-function getPlayerOverlayBounds(position) {
-  const size = metersToDegrees * 2;
-  return [ [ position[0] - size, position[1] - size], [position[0] + size, position[1] + size] ];
+function getPlayerColor(playerData) {
+  return settings.playerColor || (playerData && playerData.color);
 }
 
 function updatePlayerOverlays(data) {
+  lastPlayerData = data;
   const existingPlayerIds = Array.from(playerMarkers.keys());
   // Remove markers from disconnected players
   existingPlayerIds
@@ -535,38 +906,120 @@ function updatePlayerOverlays(data) {
     createPlayerMarker(id, playerData);
   });
   Object.entries(data).forEach(([id, playerData]) => {
-    const polygonElem = document.getElementById(`playerPolygon-${id}`);
-    polygonElem.setAttribute('transform', `rotate(${playerData.rotation})`);
-    playerMarkers.get(id).setBounds(getPlayerOverlayBounds(playerData.position));
+    const marker = playerMarkers.get(id);
+    marker.setLatLng(playerData.position);
+    const el = marker.getElement();
+    if (!el)
+      return;
+    const svg = el.querySelector('svg');
+    if (svg)
+      svg.style.transform = `rotate(${playerData.rotation}deg)`;
+    const name = el.querySelector('.playerName');
+    if (playerData.displayName) {
+      if (name) {
+        name.textContent = playerData.displayName;
+      } else {
+        removePlayerOverlay(id);
+        createPlayerMarker(id, playerData);
+      }
+    }
   });
+  updatePlayerList();
 }
 
 function removePlayerOverlay(id) {
-  document.getElementById(`playerPolygon-${id}`)?.remove();
+  const marker = playerMarkers.get(id);
+  if (marker)
+    marker.remove();
   playerMarkers.delete(id);
 }
 
-function createPlayerOverlay(id, playerData) {
+function createPlayerIcon(playerData) {
+  const size = 30 * settings.playerSize;
+  const color = getPlayerColor(playerData);
+  const wrapper = document.createElement('div');
+  wrapper.className = 'playerMarkerWrapper';
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '-15 -15 30 30');
+  svg.style.transform = `rotate(${playerData.rotation}deg)`;
   const polygon = document.createElementNS(svg.namespaceURI, 'polygon');
-  polygon.setAttribute('id', `playerPolygon-${id}`);
-  polygon.setAttribute('fill', playerData.color);
+  polygon.setAttribute('fill', color);
   polygon.setAttribute('fill-opacity', '70%');
   polygon.setAttribute('stroke', 'black');
   polygon.setAttribute('stroke-width', '1%');
   polygon.setAttribute('points', '0,-10 10,10 0,5 -10,10');
   svg.appendChild(polygon);
-  return svg;
+  wrapper.appendChild(svg);
+  if (playerData.displayName) {
+    const name = document.createElement('div');
+    name.className = 'playerName';
+    name.style.fontSize = `${12 * settings.playerSize}px`;
+    name.style.color = color;
+    name.textContent = playerData.displayName;
+    wrapper.appendChild(name);
+  }
+  return L.divIcon({
+    className: 'playerMarker',
+    html: wrapper,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  });
 }
 
 function createPlayerMarker(id, playerData) {
-  playerMarkers.set(id, L.svgOverlay(
-    createPlayerOverlay(id, playerData),
-    getPlayerOverlayBounds(playerData.position),
-    { interactive: true, bubblingMouseEvents: false })
-    .addEventListener('click', e => setMarkerToFollow(e.target))
-    .addTo(map));
+  playerMarkers.set(id, L.marker(playerData.position, {
+    icon: createPlayerIcon(playerData),
+    interactive: true,
+  })
+  .addEventListener('click', e => setMarkerToFollow(e.target))
+  .addTo(map));
+}
+
+const playerListBody = document.getElementById('playerListBody');
+const playerListRows = new Map();
+
+function updatePlayerList() {
+  for (const [id, entry] of Array.from(playerListRows.entries())) {
+    if (!lastPlayerData.hasOwnProperty(id)) {
+      entry.row.remove();
+      playerListRows.delete(id);
+    }
+  }
+  Object.keys(lastPlayerData).forEach(id => {
+    const data = lastPlayerData[id];
+    const name = data.displayName || id;
+    const color = getPlayerColor(data) || 'transparent';
+    let entry = playerListRows.get(id);
+    if (!entry) {
+      const row = document.createElement('tr');
+      row.setAttribute('id', `playerList-${id}`);
+      row.classList.add('interactive');
+      const cell = document.createElement('td');
+      const swatch = document.createElement('span');
+      swatch.className = 'playerColorSwatch';
+      const label = document.createElement('span');
+      cell.append(swatch, label);
+      row.appendChild(cell);
+      row.addEventListener('click', () => {
+        const m = playerMarkers.get(id);
+        if (m) {
+          stopFollowing();
+          map.setView(m.getLatLng(), initialZoom);
+        }
+      });
+      playerListBody.appendChild(row);
+      entry = { row, swatch, label, name: undefined, color: undefined };
+      playerListRows.set(id, entry);
+    }
+    if (entry.name !== name) {
+      entry.label.textContent = name;
+      entry.name = name;
+    }
+    if (entry.color !== color) {
+      entry.swatch.style.background = color;
+      entry.color = color;
+    }
+  });
 }
 
 function scrollToTrack(trackId) {
@@ -937,7 +1390,7 @@ function updateOnce() {
   })
   .then(_ => {
     if (markerToFollow)
-      map.panTo(markerToFollow.getBounds().getCenter());
+      map.panTo(getMarkerCenter(markerToFollow));
   });
 }
 
