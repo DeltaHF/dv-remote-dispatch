@@ -5,7 +5,7 @@
   },
   "defaults": {
     "playerSize": 1,
-    "playerColor": "",
+    "playerColor": "#0000ff",
     "trackWidth": 3,
     "stationFontSize": 14,
     "stationColor": "#ffffff"

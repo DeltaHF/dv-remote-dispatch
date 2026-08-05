@@ -4,7 +4,7 @@ using UnityEngine;
 using System.Collections.Generic;
 using System;
 
-namespace DvMod.RemoteDispatch
+namespace DvMod.RemoteDispatch_BT
 {
     public class Settings : UnityModManager.ModSettings
     {

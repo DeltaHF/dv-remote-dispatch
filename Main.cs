@@ -4,7 +4,7 @@ using System;
 using System.Reflection;
 using UnityModManagerNet;
 
-namespace DvMod.RemoteDispatch
+namespace DvMod.RemoteDispatch_BT
 {
     [EnableReloading]
     public static class Main

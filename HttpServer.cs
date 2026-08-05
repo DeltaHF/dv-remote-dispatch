@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 using System;
 using UnityEngine;
 
-namespace DvMod.RemoteDispatch
+namespace DvMod.RemoteDispatch_BT
 {
     public class HttpServer : MonoBehaviour
     {

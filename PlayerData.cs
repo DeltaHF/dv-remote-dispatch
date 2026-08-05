@@ -3,14 +3,14 @@ using System.Collections.Generic;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
-namespace DvMod.RemoteDispatch
+namespace DvMod.RemoteDispatch_BT
 {
     public static class PlayerData
     {
         private static World.Position previousPosition;
         private static float previousRotation;
-        private static readonly Dictionary<string, (World.Position position, float rotation)> mpPlayerStates =
-            new Dictionary<string, (World.Position, float)>();
+        private static readonly Dictionary<string, (World.Position position, float rotation, string displayName)> mpPlayerStates =
+            new Dictionary<string, (World.Position, float, string)>();
 
         // keep in sync with carColors in main.js
         private static readonly string[] playerColors = {
@@ -76,7 +76,8 @@ namespace DvMod.RemoteDispatch
                     if (!(
                         ApproximatelyEquals(state.position.x, player.position.x)
                         && ApproximatelyEquals(state.position.z, player.position.z)
-                        && ApproximatelyEquals(state.rotation, player.rotationY)))
+                        && ApproximatelyEquals(state.rotation, player.rotationY)
+                        && state.displayName == player.displayName))
                     {
                         changed = true;
                     }
@@ -85,7 +86,7 @@ namespace DvMod.RemoteDispatch
                 {
                     changed = true;
                 }
-                mpPlayerStates[player.username] = (player.position, player.rotationY);
+                mpPlayerStates[player.username] = (player.position, player.rotationY, player.displayName);
             }
             foreach (var username in new List<string>(mpPlayerStates.Keys))
             {
@@ -123,12 +124,18 @@ namespace DvMod.RemoteDispatch
                 }
                 return obj;
             }
+            if (MultiplayerIntegration.IsDedicatedServer())
+                return new JObject();
+            var localPlayer = new JObject(
+                new JProperty("color", "aqua"),
+                new JProperty("position", previousPosition.ToLatLon().ToJson()),
+                new JProperty("rotation", Math.Round(previousRotation, 2))
+            );
+            var localPlayerName = MultiplayerIntegration.TryGetLocalPlayerName();
+            if (localPlayerName != null)
+                localPlayer.Add(new JProperty("displayName", localPlayerName));
             return new JObject(
-                new JProperty("player", new JObject(
-                    new JProperty("color", "aqua"),
-                    new JProperty("position", previousPosition.ToLatLon().ToJson()),
-                    new JProperty("rotation", Math.Round(previousRotation, 2))
-                ))
+                new JProperty("player", localPlayer)
             );
         }
 

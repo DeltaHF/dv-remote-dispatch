@@ -3,7 +3,7 @@
     <TargetFramework>netstandard2.0</TargetFramework>
     <LangVersion>8.0</LangVersion>
     <Nullable>enable</Nullable>
-    <RootNamespace>DvMod.RemoteDispatch</RootNamespace>
+    <RootNamespace>DvMod.RemoteDispatch_BT</RootNamespace>
     <InformationalVersion>1.2.1</InformationalVersion>
   </PropertyGroup>
 
@@ -28,6 +28,7 @@
     <Reference Include="MultiplayerAPI"/>
     <Reference Include="Newtonsoft.Json"/>
     <Reference Include="net.smkd.vector3d"/>
+    <Reference Include="PassengerJobs"/>
     <Reference Include="WorldStreamer" />
   </ItemGroup>
 

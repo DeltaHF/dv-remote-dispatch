@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 using System;
 using UnityEngine;
 
-namespace DvMod.RemoteDispatch
+namespace DvMod.RemoteDispatch_BT
 {
     public static class World
     {

@@ -18,6 +18,7 @@
   <div class="leaflet-sidebar-tabs">
     <ul role="tablist">
       <li><a href="#carsTab" role="tab"><i class="fas fa-train" title="Cars"></i></a></li>
+      <li><a href="#playersTab" role="tab"><i class="fas fa-users" title="Players"></i></a></li>
       <li><a href="#jobsTab" role="tab"><i class="fas fa-clipboard-list" title="Jobs"></i></a></li>
       <li><a href="#locoControlTab" role="tab"><i class="fas fa-gamepad" title="Loco Control"></i></a></li>
       <li><a href="#settingsTab" role="tab"><i class="fas fa-cog" title="Settings"></i></a></li>
@@ -31,6 +32,9 @@
         </thead>
         <tbody id="carListBody"></tbody>
       </table>
+    </div>
+    <div class="leaflet-sidebar-pane" id="playersTab">
+      <table id="playerList"><tbody id="playerListBody"></tbody></table>
     </div>
     <div class="leaflet-sidebar-pane" id="jobsTab">
       <input id="jobSearchText" type="text" placeholder="Search...">
@@ -137,6 +141,26 @@
         <tr>
           <th><label for="stationColorInput">Station color</label></th>
           <td><input id="stationColorInput" type="color" value="#ffffff"></td>
+        </tr>
+        <tr>
+          <th><label for="passengerStationColorInput">Passenger station color</label></th>
+          <td><input id="passengerStationColorInput" type="color" value="#ffd24a"></td>
+        </tr>
+        <tr>
+          <th><label for="militaryStationColorInput">Military station color</label></th>
+          <td><input id="militaryStationColorInput" type="color" value="#ff5252"></td>
+        </tr>
+        <tr>
+          <th><label for="mapOffsetXInput">Map offset X (m)</label></th>
+          <td><input id="mapOffsetXInput" type="number" step="1" value="0"></td>
+        </tr>
+        <tr>
+          <th><label for="mapOffsetYInput">Map offset Y (m)</label></th>
+          <td><input id="mapOffsetYInput" type="number" step="1" value="0"></td>
+        </tr>
+        <tr>
+          <th><label for="mapScaleInput">Map scale (%)</label></th>
+          <td><input id="mapScaleInput" type="number" step="0.1" min="1" value="100"></td>
         </tr>
       </table>
     </div>
