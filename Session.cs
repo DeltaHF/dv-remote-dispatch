@@ -13,10 +13,27 @@ namespace DvMod.RemoteDispatch_BT
         private static readonly TimeSpan SessionTimeout = TimeSpan.FromMinutes(5);
         private static readonly object allSesssionsLock = new object();
         private static readonly Dictionary<string, Session> allSessions = new Dictionary<string, Session>();
-        private static readonly HashSet<string> AllTags = new HashSet<string>() { "cars", "jobs", "junctions", "player" };
+        private static readonly HashSet<string> AllTags = new HashSet<string>() { "cars", "jobs", "junctions", "player", "assignments", "permissions" };
 
         public static event Action<string>? OnSessionStarted;
         public static event Action<string>? OnSessionEnded;
+
+        /// <summary>
+        /// Forget browser sessions. Called on world start/stop so the next poll
+        /// receives a full snapshot of the new room instead of stale tags.
+        /// </summary>
+        public static void Reset()
+        {
+            lock (allSesssionsLock)
+            {
+                // Wake up long-poll requests before dropping the sessions; otherwise a
+                // browser waiting on the old world could take up to a minute to notice
+                // that the room was replaced.
+                foreach (var session in allSessions.Values)
+                    session.pendingTags.Add("assignments");
+                allSessions.Clear();
+            }
+        }
 
         private class Session
         {
@@ -108,7 +125,7 @@ namespace DvMod.RemoteDispatch_BT
             };
         }
 
-        private static JToken? GetUpdateForTag(string tag)
+        private static JToken? GetUpdateForTag(string tag, string username)
         {
             return tag switch
             {
@@ -116,6 +133,8 @@ namespace DvMod.RemoteDispatch_BT
                 "jobs" => JObject.FromObject(JobData.GetAllJobData()),
                 "junctions" => new JArray(Junctions.GetAllJunctionStates()),
                 "player" => PlayerData.GetPlayerData(),
+                "assignments" => DispatchAssignments.GetSnapshot(),
+                "permissions" => DispatchAssignments.GetPermissions(username),
                 _ when tag.Contains('-') => GetUpdateForSplitTag(tag),
                 _ => throw new NotImplementedException($"Unexpected update tag {tag}"),
             };
@@ -124,7 +143,7 @@ namespace DvMod.RemoteDispatch_BT
         public static async Task<string> GetUpdates(string username, string sessionId)
         {
             var tags = await GetTags(username, sessionId).ConfigureAwait(false);
-            return JsonConvert.SerializeObject(tags.ToDictionary(tag => tag, tag => GetUpdateForTag(tag)));
+            return JsonConvert.SerializeObject(tags.ToDictionary(tag => tag, tag => GetUpdateForTag(tag, username)));
         }
     }
 }

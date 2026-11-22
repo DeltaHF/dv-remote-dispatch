@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -59,13 +60,20 @@ namespace DvMod.RemoteDispatch_BT
 
         private static void CheckMultiplayerTransforms()
         {
-            var players = MultiplayerIntegration.GetPlayers();
+            if (!MultiplayerIntegration.TryGetPlayers(out var players))
+                return;
+
             if (players.Count == 0)
             {
+                var active = MultiplayerIntegration.IsDedicatedServer()
+                    ? new HashSet<string>()
+                    : new HashSet<string> { "player" };
+                DispatchAssignments.ReconcileActivePlayers(active);
                 CheckLocalTransform();
                 return;
             }
 
+            DispatchAssignments.ReconcileActivePlayers(players.Select(p => p.username));
             var changed = players.Count != mpPlayerStates.Count;
             var seen = new HashSet<string>();
             foreach (var player in players)

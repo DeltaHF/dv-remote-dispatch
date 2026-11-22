@@ -50,18 +50,29 @@ namespace DvMod.RemoteDispatch_BT
 
         public static List<RemotePlayerInfo> GetPlayers()
         {
-            var result = new List<RemotePlayerInfo>();
+            TryGetPlayers(out var result);
+            return result;
+        }
+
+        /// <summary>
+        /// Returns false when the multiplayer API could not be queried. Callers that
+        /// clean up player-owned state must not treat a failed query as "no players".
+        /// </summary>
+        public static bool TryGetPlayers(out List<RemotePlayerInfo> result)
+        {
+            result = new List<RemotePlayerInfo>();
             if (!IsAvailable())
-                return result;
+                return true;
             try
             {
                 CollectPlayers(result);
+                return true;
             }
             catch (Exception e)
             {
                 Main.DebugLog(() => $"Failed to collect multiplayer players: {e}");
+                return false;
             }
-            return result;
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]

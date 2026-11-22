@@ -51,6 +51,14 @@ namespace DvMod.RemoteDispatch_BT
             return job;
         }
 
+        private static bool IsTerminalJobState(JobState state)
+        {
+            return state == JobState.Completed
+                || state == JobState.Abandoned
+                || state == JobState.Failed
+                || state == JobState.Expired;
+        }
+
         public static Dictionary<string, JObject> GetAllJobData()
         {
             static IEnumerable<JObject> PassengerJson(TaskData sequenceTask)
@@ -159,9 +167,11 @@ namespace DvMod.RemoteDispatch_BT
 
             // ensure cache is updated
             JobForId("");
-            return jobForId.ToDictionary(
-                kvp => kvp.Key,
-                kvp => JobToJson(kvp.Value));
+            var liveJobs = jobForId
+                .Where(kvp => !IsTerminalJobState(kvp.Value.State))
+                .ToDictionary(kvp => kvp.Key, kvp => JobToJson(kvp.Value));
+            DispatchAssignments.PruneMissingJobs(liveJobs.Keys);
+            return liveJobs;
         }
 
         public static string GetAllJobDataJson()
@@ -192,6 +202,39 @@ namespace DvMod.RemoteDispatch_BT
             {
                 Main.DebugLog(() => "Persistent Jobs sent update for job " + job.ID);
                 Sessions.AddTag("jobs");
+            }
+
+            private static void OnJobTerminal(Job job)
+            {
+                DispatchAssignments.RemoveJob(job.ID);
+                Sessions.AddTag("jobs");
+            }
+
+            [HarmonyPatch(typeof(Job), nameof(Job.CompleteJob))]
+            public static class CompleteJobPatch
+            {
+                public static void Postfix(Job __instance)
+                {
+                    OnJobTerminal(__instance);
+                }
+            }
+
+            [HarmonyPatch(typeof(Job), nameof(Job.AbandonJob))]
+            public static class AbandonJobPatch
+            {
+                public static void Postfix(Job __instance)
+                {
+                    OnJobTerminal(__instance);
+                }
+            }
+
+            [HarmonyPatch(typeof(Job), nameof(Job.ExpireJob))]
+            public static class ExpireJobPatch
+            {
+                public static void Postfix(Job __instance)
+                {
+                    OnJobTerminal(__instance);
+                }
             }
             [HarmonyPatch(typeof(Job))]
             public static class UpdateJobStatePatches
