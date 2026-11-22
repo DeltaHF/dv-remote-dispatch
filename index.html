@@ -126,6 +126,20 @@
           <td><input id="stationNamesCheckbox" type="checkbox"></td>
         </tr>
         <tr>
+          <th><label for="railSignScopeSelect" title="Choose whether signs cover the whole map, every online player, or only your own player. Player ranges are 1200 m.">Rail sign range</label></th>
+          <td>
+            <select id="railSignScopeSelect">
+              <option value="world">Whole map</option>
+              <option value="players">Around every online player</option>
+              <option value="local" selected>Around my player</option>
+            </select>
+          </td>
+        </tr>
+        <tr>
+          <th><label for="hideOverlappingRailSignsCheckbox" title="Optionally hide signs that still overlap after automatic spacing.">Declutter rail signs</label></th>
+          <td><input id="hideOverlappingRailSignsCheckbox" type="checkbox"></td>
+        </tr>
+        <tr>
           <th><label for="playerSizeInput">Player arrow size</label></th>
           <td><input id="playerSizeInput" type="range" min="0.5" max="3" step="0.1" value="1"></td>
         </tr>
@@ -181,6 +195,23 @@
   </div>
 </div>
 <div id="map" class="dark" style="height:100vh"></div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="rd-sign-heading" viewBox="0 0 20 20">
+    <path d="M10 16V4m-5.2 5.2L10 4l5.2 5.2" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="rd-sign-turnout" viewBox="0 0 16 12">
+    <path d="M4 1.5 14 6 4 10.5Z" fill="currentColor"/>
+  </symbol>
+  <symbol id="rd-sign-speed-up" viewBox="0 0 180 90" preserveAspectRatio="none">
+    <rect width="180" height="90" fill="#386e45"/>
+    <path d="M90 0 180 90H0Z" fill="#fff"/>
+  </symbol>
+  <symbol id="rd-sign-speed-down" viewBox="0 0 180 90" preserveAspectRatio="none">
+    <rect width="180" height="90" fill="#9d3b34"/>
+    <path d="M0 0H180L90 90Z" fill="#fff"/>
+  </symbol>
+</svg>
+<script src="res/signs.js"></script>
 <script src="res/route.js"></script>
 <script src="res/dispatch.js"></script>
 <script src="res/main.js"></script>
