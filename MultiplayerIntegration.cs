@@ -156,6 +156,50 @@ namespace DvMod.RemoteDispatch_BT
             }
         }
 
+        /// <summary>
+        /// Username of the player running this game instance, used to tag the local
+        /// entry in /player. Display names are not unique, so they cannot identify it.
+        /// </summary>
+        public static string? TryGetLocalPlayerUsername()
+        {
+            if (!IsAvailable())
+                return null;
+            try
+            {
+                return GetLocalPlayerUsername();
+            }
+            catch (Exception e)
+            {
+                Main.DebugLog(() => $"Failed to get local player username: {e}");
+                return null;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static string? GetLocalPlayerUsername()
+        {
+            MPAPI.Interfaces.IPlayer? localPlayer = null;
+            var client = MPAPI.MultiplayerAPI.Client;
+            if (client != null && client.IsConnected)
+                localPlayer = client.GetPlayer(client.PlayerId);
+            if (localPlayer == null)
+            {
+                var server = MPAPI.MultiplayerAPI.Server;
+                if (server != null)
+                {
+                    foreach (var player in server.Players)
+                    {
+                        if (player.IsHost)
+                        {
+                            localPlayer = player;
+                            break;
+                        }
+                    }
+                }
+            }
+            return localPlayer == null ? null : localPlayer.Username;
+        }
+
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static string? GetLocalPlayerName()
         {
