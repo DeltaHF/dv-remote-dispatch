@@ -65,6 +65,11 @@ namespace DvMod.RemoteDispatch_BT
 
             if (players.Count == 0)
             {
+                if (mpPlayerStates.Count > 0)
+                {
+                    mpPlayerStates.Clear();
+                    Sessions.AddTag("player");
+                }
                 var active = MultiplayerIntegration.IsDedicatedServer()
                     ? new HashSet<string>()
                     : new HashSet<string> { "player" };
@@ -121,14 +126,18 @@ namespace DvMod.RemoteDispatch_BT
             if (players.Count > 0)
             {
                 var obj = new JObject();
+                var localUsername = MultiplayerIntegration.TryGetLocalPlayerUsername();
                 foreach (var player in players)
                 {
-                    obj.Add(player.username, new JObject(
+                    var entry = new JObject(
                         new JProperty("displayName", player.displayName),
                         new JProperty("color", ColorForUsername(player.username)),
                         new JProperty("position", player.position.ToLatLon().ToJson()),
                         new JProperty("rotation", Math.Round(player.rotationY, 2))
-                    ));
+                    );
+                    if (localUsername != null && string.Equals(player.username, localUsername, StringComparison.Ordinal))
+                        entry["local"] = true;
+                    obj.Add(player.username, entry);
                 }
                 return obj;
             }
@@ -137,7 +146,8 @@ namespace DvMod.RemoteDispatch_BT
             var localPlayer = new JObject(
                 new JProperty("color", "aqua"),
                 new JProperty("position", previousPosition.ToLatLon().ToJson()),
-                new JProperty("rotation", Math.Round(previousRotation, 2))
+                new JProperty("rotation", Math.Round(previousRotation, 2)),
+                new JProperty("local", true)
             );
             var localPlayerName = MultiplayerIntegration.TryGetLocalPlayerName();
             if (localPlayerName != null)

@@ -20,22 +20,37 @@ const defaultSettings = {
   mapScale: 100,
   showMapBackground: true,
   showStationNames: true,
+  showSpeedSigns: true,
+  showGradeSigns: true,
+  railSignScope: 'local',
+  hideOverlappingRailSigns: false,
   routeOpacity: 0.5,
   routeColor: '#c44dff',
   pinnedJob: '',
   jobOrder: [],
 };
 const settings = { ...defaultSettings };
+const SETTINGS_VERSION = 3;
 
 function loadLocalSettings() {
   try {
     const stored = JSON.parse(localStorage.getItem('rdSettings') || '{}');
+    const version = Number(stored.version) || 1;
+    delete stored.version;
+    delete stored.railSignRangeMeters;
+    if (version < SETTINGS_VERSION) {
+      // Carry the old local-only checkbox over to the three-state scope.
+      stored.railSignScope = stored.railSignLocalOnly === false ? 'players' : 'local';
+      delete stored.railSignLocalOnly;
+    }
     Object.assign(settings, stored);
+    if (version < SETTINGS_VERSION)
+      saveSettings();
   } catch (e) {}
 }
 
 function saveSettings() {
-  localStorage.setItem('rdSettings', JSON.stringify(settings));
+  localStorage.setItem('rdSettings', JSON.stringify({ ...settings, version: SETTINGS_VERSION }));
 }
 
 const configReady = fetch(new URL('/config', location))
@@ -198,6 +213,22 @@ function applyStationLabelSettings() {
 }
 
 function initSettingsUI() {
+  const railSignScope = document.getElementById('railSignScopeSelect');
+  railSignScope.value = settings.railSignScope;
+  railSignScope.addEventListener('change', () => {
+    settings.railSignScope = railSignScope.value;
+    saveSettings();
+    scheduleRailSignLayout();
+  });
+
+  const hideOverlappingRailSigns = document.getElementById('hideOverlappingRailSignsCheckbox');
+  hideOverlappingRailSigns.checked = !!settings.hideOverlappingRailSigns;
+  hideOverlappingRailSigns.addEventListener('change', () => {
+    settings.hideOverlappingRailSigns = hideOverlappingRailSigns.checked;
+    saveSettings();
+    scheduleRailSignLayout();
+  });
+
   const playerSizeInput = document.getElementById('playerSizeInput');
   playerSizeInput.value = settings.playerSize;
   playerSizeInput.addEventListener('input', e => {
@@ -308,6 +339,7 @@ function initSettingsUI() {
   });
 
   stationNamesCheckbox.checked = settings.showStationNames;
+  syncLayerToggleButtons();
 
   applyStationLabelSettings();
 }
@@ -319,6 +351,99 @@ const zoomHome = new L.Control.ZoomHome({
   zoomHomeTitle: 'Zoom to player(s)',
   zoomOutText: '<i class="fas fa-search-minus"></i>',
 }).addTo(map);
+
+/////////////////////
+// map layer toggles (bottom left)
+
+const layerToggleLabels = {
+  showStationNames: 'Station names',
+  showSpeedSigns: 'Speed limits',
+  showGradeSigns: 'Grades',
+};
+
+const layerToggleDefinitions = [
+  {
+    setting: 'showStationNames',
+    icon: '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+      '<path d="M4 10 12 3.5 20 10v1.2H4z" fill="currentColor"/>' +
+      '<path d="M6 12.5h2.8v6.2H6zm9.2 0H18v6.2h-2.8zM10.6 12.5h2.8v3.4h-2.8z" fill="currentColor"/>' +
+      '<path d="M3.5 19.8h17v1.4h-17z" fill="currentColor"/></svg>',
+  },
+  {
+    setting: 'showSpeedSigns',
+    icon: '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+      '<circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="2.4"/>' +
+      '<text x="12" y="15.4" text-anchor="middle" font-family="Arial, sans-serif" font-size="8.6" font-weight="bold" fill="currentColor">50</text></svg>',
+  },
+  {
+    setting: 'showGradeSigns',
+    icon: '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+      '<path d="M3.5 19h17L3.5 6.5z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/>' +
+      '<path d="M14 19v-4.1" stroke="currentColor" stroke-width="1.8"/></svg>',
+  },
+];
+
+let layerToggleButtons = {};
+
+const layerToggleControl = L.control({ position: 'bottomleft' });
+layerToggleControl.onAdd = function () {
+  const container = L.DomUtil.create('div', 'mapLayerToggles');
+  container.setAttribute('role', 'group');
+  container.setAttribute('aria-label', 'Map layers');
+  L.DomEvent.disableClickPropagation(container);
+  L.DomEvent.disableScrollPropagation(container);
+
+  for (const definition of layerToggleDefinitions) {
+    const label = layerToggleLabels[definition.setting];
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'mapLayerToggle';
+    button.dataset.setting = definition.setting;
+    button.innerHTML = definition.icon;
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    button.setAttribute('aria-pressed', 'true');
+    button.addEventListener('click', () => toggleMapLayer(definition.setting));
+    container.appendChild(button);
+    layerToggleButtons[definition.setting] = button;
+  }
+  syncLayerToggleButtons();
+  return container;
+};
+layerToggleControl.addTo(map);
+
+function syncLayerToggleButtons() {
+  for (const setting of Object.keys(layerToggleButtons)) {
+    const button = layerToggleButtons[setting];
+    const enabled = !!settings[setting];
+    button.classList.toggle('active', enabled);
+    button.setAttribute('aria-pressed', String(enabled));
+  }
+}
+
+function setLayerToggleUnavailable(setting, unavailable, reason) {
+  const button = layerToggleButtons[setting];
+  if (!button)
+    return;
+  button.disabled = unavailable;
+  button.classList.toggle('unavailable', unavailable);
+  button.title = unavailable
+    ? `${layerToggleLabels[setting]} - ${reason}`
+    : layerToggleLabels[setting];
+}
+
+function toggleMapLayer(setting) {
+  settings[setting] = !settings[setting];
+  saveSettings();
+  syncLayerToggleButtons();
+  if (setting === 'showStationNames') {
+    stationNamesCheckbox.checked = settings.showStationNames;
+    updateStationLabels();
+  } else {
+    scheduleRailSignLayout();
+  }
+}
+
 
 /////////////////////
 // vertical zoom level control
@@ -479,6 +604,8 @@ function updateSidebarTabCount() {
 }
 updateSidebarTabCount();
 sidebar.on('opening', stopFollowing);
+sidebar.on('opening', () => document.body.classList.add('rd-sidebar-open'));
+sidebar.on('closing', () => document.body.classList.remove('rd-sidebar-open'));
 
 const tablesort = new Tablesort(document.getElementById('carList'));
 const carListBody = document.getElementById('carListBody');
@@ -1418,6 +1545,7 @@ function layoutStationLabels() {
     if (offsetY > 0)
       label.text.style.transform = `translateY(${offsetY}px)`;
   }
+  scheduleRailSignLayout();
 }
 
 map.on('zoomend', layoutStationLabels);
@@ -1451,6 +1579,7 @@ languageDropdown.addEventListener('input', fetchStations);
 stationNamesCheckbox.addEventListener('change', e => {
   settings.showStationNames = e.target.checked;
   saveSettings();
+  syncLayerToggleButtons();
   updateStationLabels();
 });
 
@@ -1459,6 +1588,9 @@ tracksReady.then(() => fetchStations().catch(() => {})).catch(() => {});
 /////////////////////
 // junctions
 
+// Keep clickable switch graphics above the sign bubbles, including in full display.
+const JUNCTION_PANE = 'junctionPane';
+map.createPane(JUNCTION_PANE).style.zIndex = 595;
 let junctions = [];
 const junctionsReady = tracksReady
 .then(_ => fetch(new URL('/junction', location)))
@@ -1528,7 +1660,7 @@ function createJunctionMarker(p, junctionId) {
   return L.svgOverlay(
     createJunctionOverlay(junctionId),
     getJunctionOverlayBounds(p),
-    { interactive: true, renderer: canvasRenderer })
+    { interactive: true, renderer: canvasRenderer, pane: JUNCTION_PANE })
     .addEventListener('click', () => toggleJunction(junctionId) )
     .addTo(map)
     .setZIndex(Math.floor(p[0] * 100000 + p[1] * 100000));
@@ -1537,6 +1669,321 @@ function createJunctionMarker(p, junctionId) {
 function updateAllJunctions(states) {
   states.forEach((state, index) => updateJunctionOverlay(index, state))
 }
+
+/////////////////////
+// speed limit and gradient signs
+
+const RAIL_SIGN_PANE = 'railSignPane';
+const RAIL_SIGN_SCALE = 0.55;
+const RAIL_SIGN_RANGE_METERS = 1200;
+const RAIL_SIGN_RETRY_DELAY = 5000;
+const RAIL_SIGN_RETRIES = 30;
+const RAIL_SIGN_REFRESH_INTERVAL = 20000;
+
+const railSignPane = map.createPane(RAIL_SIGN_PANE);
+// Below switch graphics and station labels so they remain usable in full display.
+railSignPane.style.zIndex = 590;
+railSignPane.style.setProperty('--rail-sign-scale', String(RAIL_SIGN_SCALE));
+const railSignLayer = L.layerGroup().addTo(map);
+const railSignMarkers = new Map();
+
+let railSigns = [];
+let railSignEntries = [];
+let railSignPlayerPositions = [];
+let railSignLocalPosition = null;
+let railSignLayerMask = -1;
+let railSignSnapshot = null;
+let railSignRefreshPending = false;
+let railSignLayoutFrame = 0;
+let railSignTrackIndex = null;
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function railSignsEnabled() {
+  return !!(settings.showSpeedSigns || settings.showGradeSigns);
+}
+
+function scheduleRailSignLayout() {
+  if (railSignLayoutFrame)
+    return;
+  railSignLayoutFrame = requestAnimationFrame(() => {
+    railSignLayoutFrame = 0;
+    layoutRailSigns();
+  });
+}
+
+function updateRailSignPlayers(data) {
+  if (typeof SignsLib === 'undefined')
+    return;
+  const entries = Object.values(data).filter(player => player && SignsLib.isMapPosition(player.position));
+  const positions = entries.map(player => player.position);
+  const tagged = entries.find(player => player.local === true);
+  const localPosition = tagged ? tagged.position : null;
+  const same = (a, b) => a ? !!b && a[0] === b[0] && a[1] === b[1] : !b;
+  if (positions.length === railSignPlayerPositions.length &&
+      positions.every((position, index) => position[0] === railSignPlayerPositions[index][0] &&
+        position[1] === railSignPlayerPositions[index][1]) &&
+      same(localPosition, railSignLocalPosition))
+    return;
+  railSignPlayerPositions = positions;
+  railSignLocalPosition = localPosition;
+  if (railSigns.length && railSignsEnabled())
+    scheduleRailSignLayout();
+}
+
+function createRailSignSymbol(name, className) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  const use = document.createElementNS(ns, 'use');
+  svg.setAttribute('class', className);
+  svg.setAttribute('aria-hidden', 'true');
+  use.setAttribute('href', '#rd-sign-' + name);
+  svg.appendChild(use);
+  return svg;
+}
+
+function createRailSignElement(model) {
+  const paired = model.columns.some(({ speed, grades }) => speed && grades.length);
+  const bubble = L.DomUtil.create('div', `railSignBubble${paired ? ' has-paired-grade' : ''}`);
+  bubble.title = model.title;
+  bubble.setAttribute('role', 'img');
+  bubble.setAttribute('aria-label', model.title);
+  const direction = L.DomUtil.create('div', 'railSignDirection', bubble);
+  const heading = createRailSignSymbol('heading', 'railSignHeading');
+  heading.style.transform = `rotate(${model.heading}deg)`;
+  direction.appendChild(heading);
+  const faces = L.DomUtil.create('div', 'railSignFaces', bubble);
+
+  for (const { speed, grades } of model.columns) {
+    const face = L.DomUtil.create('div', 'railSignFace', faces);
+    if (speed) {
+      const row = L.DomUtil.create('div', 'railSignSpeed', face);
+      if (speed.speedChange === 'up' || speed.speedChange === 'down') {
+        row.classList.add('has-change');
+        row.appendChild(createRailSignSymbol('speed-' + speed.speedChange, 'railSignSpeedChange'));
+      }
+      const value = L.DomUtil.create('span', 'railSignSpeedValue', row);
+      value.textContent = String(speed.kmh);
+      if (speed.arrow === 'left' || speed.arrow === 'right') {
+        const turn = L.DomUtil.create('div', 'railSignTurnout ' + speed.arrow, face);
+        turn.appendChild(createRailSignSymbol('turnout', 'railSignTurnoutArrow'));
+      }
+    }
+    for (const grade of grades) {
+      const kind = grade.kind === 'up' || grade.kind === 'down' ? grade.kind : 'flat';
+      const row = L.DomUtil.create('div', `railSignGrade ${kind}${speed ? '' : ' grade-only'}`, face);
+      row.textContent = grade.text;
+    }
+  }
+  return bubble;
+}
+
+function addRailSignMarker(pole, element) {
+  return L.marker(pole.p, {
+    icon: L.divIcon({ className: 'railSignIcon', html: element, iconSize: [0, 0], iconAnchor: [0, 0] }),
+    interactive: false,
+    keyboard: false,
+    pane: RAIL_SIGN_PANE,
+  }).addTo(railSignLayer);
+}
+
+function collectRailSignObstacles(size) {
+  const obstacles = [];
+  const container = map.getContainer();
+  const mapRect = container.getBoundingClientRect();
+  const x = mapRect.left + container.clientLeft, y = mapRect.top + container.clientTop;
+  const view = { left: 0, top: 0, right: size.x, bottom: size.y };
+  const add = element => {
+    if (!element)
+      return;
+    const rect = element.getBoundingClientRect();
+    if (!rect.width && !rect.height)
+      return;
+    const box = { left: rect.left - x - 2, top: rect.top - y - 2, right: rect.right - x + 2, bottom: rect.bottom - y + 2 };
+    if (SignsLib.rectsOverlap(box, view)) obstacles.push(box);
+  };
+  for (const marker of stationLabelMarkers) {
+    const element = marker.getElement();
+    add(element && element.querySelector('.stationLabelText'));
+  }
+  for (const junction of junctions)
+    add(junction && junction.marker && junction.marker.getElement());
+  return obstacles;
+}
+
+function refreshRailSignEntries() {
+  const options = { speeds: !!settings.showSpeedSigns, grades: !!settings.showGradeSigns };
+  const mask = Number(options.speeds) + 2 * Number(options.grades);
+  if (mask === railSignLayerMask)
+    return;
+  railSignLayerMask = mask;
+  railSignLayer.clearLayers();
+  railSignMarkers.clear();
+  railSignEntries = [];
+  if (!mask || typeof SignsLib === 'undefined')
+    return;
+
+  for (const pole of railSigns) {
+    if (!pole || !SignsLib.isMapPosition(pole.p))
+      continue;
+    const model = SignsLib.poleModel(pole, options);
+    if (!model)
+      continue;
+    const rail = SignsLib.railSignTrackPosition(railSignTrackIndex, pole, model.heading, metersToDegrees);
+    railSignEntries.push({ pole, model, rail });
+  }
+}
+
+function layoutRailSigns() {
+  refreshRailSignEntries();
+  if (!railSignEntries.length)
+    return;
+
+  const size = map.getSize();
+  const radius = RAIL_SIGN_RANGE_METERS * metersToDegrees;
+  const players = SignsLib.rangePlayers(railSignPlayerPositions, railSignLocalPosition, settings.railSignScope);
+  const projected = [];
+  if (size.x > 0 && size.y > 0 && (!players || players.length)) {
+    for (const entry of railSignEntries) {
+      if (players && !SignsLib.withinPlayerRange(entry.pole.p, players, radius))
+        continue;
+      const anchor = map.latLngToContainerPoint(entry.pole.p);
+      if (anchor.x >= 0 && anchor.x <= size.x && anchor.y >= 0 && anchor.y <= size.y)
+        projected.push({ entry, anchor });
+    }
+  }
+
+  const wanted = new Set(projected.map(item => item.entry));
+  for (const [entry, item] of railSignMarkers) {
+    if (!wanted.has(entry)) {
+      railSignLayer.removeLayer(item.marker);
+      railSignMarkers.delete(entry);
+    }
+  }
+  if (!projected.length)
+    return;
+
+  // Each marker remains anchored at the exported pole position. Only the CSS
+  // offset of its card (and corresponding leader endpoint) changes on reflow.
+  const cards = projected.map(({ entry, anchor }) => {
+    let item = railSignMarkers.get(entry);
+    if (!item) {
+      const element = createRailSignElement(entry.model);
+      item = { element, marker: addRailSignMarker(entry.pole, element), size: null };
+      railSignMarkers.set(entry, item);
+    }
+    return { entry, anchor, item };
+  });
+  // Batch reads before writes. Face sizes stay fixed for the entry's lifetime.
+  for (const { item } of cards) {
+    if (!item.size) {
+      const { width, height } = item.element.getBoundingClientRect();
+      if (width && height) item.size = { width, height };
+    }
+  }
+  const measured = cards.filter(card => card.item.size);
+  const declutter = !!settings.hideOverlappingRailSigns;
+  const obstacles = measured.length > 1 || declutter ? collectRailSignObstacles(size) : [];
+  const slots = SignsLib.layoutRailSignCards(measured.map(({ entry, anchor, item }) => ({
+    anchor, ...item.size, heading: entry.model.heading, rail: entry.rail,
+  })), size, obstacles);
+  let kept = null;
+  if (declutter) {
+    const ordered = slots.map((slot, i) => ({ i, rect: slot.rect }));
+    ordered.sort((a, b) => measured[a.i].anchor.y - measured[b.i].anchor.y || measured[a.i].anchor.x - measured[b.i].anchor.x);
+    kept = new Set(SignsLib.resolveCollisions(ordered, obstacles).map(item => item.i));
+  }
+  for (const [i, { anchor, item }] of measured.entries()) {
+    const x = slots[i].x - anchor.x, y = slots[i].y - anchor.y;
+    const icon = item.marker.getElement();
+    item.element.style.left = `${x}px`;
+    item.element.style.top = `${y}px`;
+    // Connect to the nearby edge, just inside the rounded face, not its centre.
+    const { left, top, right, bottom } = slots[i].rect;
+    const leadX = Math.max(left + 3, Math.min(right - 3, anchor.x)) - anchor.x;
+    const leadY = Math.max(top + 3, Math.min(bottom - 3, anchor.y)) - anchor.y;
+    icon.style.setProperty('--rail-sign-leader-angle', `${Math.atan2(leadY, leadX)}rad`);
+    icon.style.setProperty('--rail-sign-leader-length', `${Math.hypot(leadX, leadY)}px`);
+    icon.style.visibility = !kept || kept.has(i) ? '' : 'hidden';
+  }
+}
+
+function applyRailSignAvailability(data, error) {
+  if (!data) {
+    const reason = error || 'sign data unavailable';
+    setLayerToggleUnavailable('showSpeedSigns', true, reason);
+    setLayerToggleUnavailable('showGradeSigns', true, reason);
+    return;
+  }
+  setLayerToggleUnavailable('showSpeedSigns', !(Number(data.speedPoles) > 0), 'no speed limit signs in this world');
+  setLayerToggleUnavailable('showGradeSigns', !(Number(data.gradePoles) > 0), 'no gradient signs in this world');
+}
+
+async function requestRailSigns() {
+  const response = await fetch(new URL('/railSigns', location));
+  if (response.status === 503)
+    return null;
+  if (!response.ok)
+    throw new Error(`railSigns ${response.status}`);
+  return response.json();
+}
+
+function acceptRailSignSnapshot(data) {
+  if (data.generatedAt && railSignSnapshot === data.generatedAt)
+    return;
+  railSignSnapshot = data.generatedAt;
+  railSigns = Array.isArray(data.poles) ? data.poles : [];
+  railSignLayerMask = -1;
+  applyRailSignAvailability(data);
+  scheduleRailSignLayout();
+  if (data.generationWarning)
+    console.warn('Rail signs:', data.generationWarning);
+}
+
+async function refreshObservedRailSigns() {
+  if (railSignRefreshPending || document.hidden || !railSignsEnabled())
+    return;
+  railSignRefreshPending = true;
+  try {
+    const data = await requestRailSigns();
+    if (data && data.ready !== false && !data.error)
+      acceptRailSignSnapshot(data);
+  } catch (e) {
+    // Keep the last good snapshot during a temporary connection failure.
+  } finally {
+    railSignRefreshPending = false;
+  }
+}
+
+async function loadRailSigns() {
+  for (let attempt = 0; attempt <= RAIL_SIGN_RETRIES; attempt++) {
+    try {
+      const data = await requestRailSigns();
+      if (data && data.error) {
+        applyRailSignAvailability(null, data.error);
+        return;
+      }
+      // ready=false means the game has not finished loading the railway yet.
+      if (data && data.ready !== false) {
+        acceptRailSignSnapshot(data);
+        if (Number(data.version) >= 3)
+          setInterval(refreshObservedRailSigns, RAIL_SIGN_REFRESH_INTERVAL);
+        return;
+      }
+    } catch (e) {
+      // Retry while the map service starts up.
+    }
+    if (attempt < RAIL_SIGN_RETRIES)
+      await delay(RAIL_SIGN_RETRY_DELAY);
+  }
+  applyRailSignAvailability(null);
+}
+
+configReady.then(loadRailSigns).catch(() => {});
+junctionsReady.then(scheduleRailSignLayout).catch(() => {});
+map.on('zoomend moveend resize', scheduleRailSignLayout);
 
 /////////////////////
 // job routes
@@ -1561,6 +2008,15 @@ const topologyReady = Promise.all([tracksReady, junctionsReady])
     }
   }
   return topology;
+});
+
+topologyReady.then(data => {
+  if (!data || typeof SignsLib === 'undefined')
+    return;
+  railSignTrackIndex = SignsLib.buildRailSignTrackIndex(data);
+  for (const entry of railSignEntries)
+    entry.rail = SignsLib.railSignTrackPosition(railSignTrackIndex, entry.pole, entry.model.heading, metersToDegrees);
+  scheduleRailSignLayout();
 });
 
 function ensureTrackGraph() {
@@ -2029,6 +2485,7 @@ function getPlayerColor(playerData) {
 
 function updatePlayerOverlays(data) {
   lastPlayerData = data;
+  updateRailSignPlayers(data);
   const existingPlayerIds = Array.from(playerMarkers.keys());
   // Remove markers from disconnected players
   existingPlayerIds

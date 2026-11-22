@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <Reference Include="Assembly-CSharp"/>
+    <Reference Include="BezierCurves"/>
     <Reference Include="DV.BrakeSystem"/>
     <Reference Include="DV.Simulation"/>
     <Reference Include="DV.Common"/>
@@ -21,6 +22,7 @@
     <Reference Include="DV.Localization"/>
     <Reference Include="DV.PointSet"/>
     <Reference Include="DV.RailTrack" />
+    <Reference Include="DV.SignPlacer"/>
     <Reference Include="DV.ThingTypes"/>
     <Reference Include="DV.Utils"/>
     <Reference Include="I2.Localization"/>
@@ -46,6 +48,7 @@
     <EmbeddedResource Include="licenses/*.png"/>
     <EmbeddedResource Include="main.js"/>
     <EmbeddedResource Include="route.js"/>
+    <EmbeddedResource Include="signs.js"/>
     <EmbeddedResource Include="style.css"/>
     <EmbeddedResource Include="worldmap.jpg"/>
   </ItemGroup>
