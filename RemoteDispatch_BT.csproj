@@ -4,7 +4,7 @@
     <LangVersion>8.0</LangVersion>
     <Nullable>enable</Nullable>
     <RootNamespace>DvMod.RemoteDispatch_BT</RootNamespace>
-    <InformationalVersion>1.2.1</InformationalVersion>
+    <InformationalVersion>1.1.0</InformationalVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -40,10 +40,12 @@
 
   <ItemGroup>
     <EmbeddedResource Include="icon.svg"/>
+    <EmbeddedResource Include="dispatch.js"/>
     <EmbeddedResource Include="index.html"/>
     <EmbeddedResource Include="leaflet.rotatedImageOverlay.js"/>
     <EmbeddedResource Include="licenses/*.png"/>
     <EmbeddedResource Include="main.js"/>
+    <EmbeddedResource Include="route.js"/>
     <EmbeddedResource Include="style.css"/>
     <EmbeddedResource Include="worldmap.jpg"/>
   </ItemGroup>

@@ -28,6 +28,8 @@ namespace DvMod.RemoteDispatch_BT
             {
             }
 
+            settings.MigrateLegacyPermissions(modEntry);
+
             mod.OnGUI = OnGUI;
             mod.OnSaveGUI = OnSaveGUI;
             mod.OnToggle = OnToggle;
@@ -105,6 +107,9 @@ namespace DvMod.RemoteDispatch_BT
 
         private static void Start()
         {
+            RailTracks.ResetCache();
+            Sessions.Reset();
+            DispatchAssignments.BeginWorld();
             HttpServer.Create();
             Updater.Create();
             CarUpdater.Start();
@@ -112,9 +117,12 @@ namespace DvMod.RemoteDispatch_BT
 
         private static void Stop()
         {
+            DispatchAssignments.EndWorld();
             CarUpdater.Stop();
             Updater.Destroy();
             HttpServer.Destroy();
+            RailTracks.ResetCache();
+            Sessions.Reset();
         }
 
         public static void DebugLog(TrainCar car, Func<string> message)

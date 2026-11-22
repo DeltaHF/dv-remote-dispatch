@@ -7,6 +7,7 @@ using System.Net;
 using System.Text;
 using System.Threading.Tasks;
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace DvMod.RemoteDispatch_BT
@@ -87,6 +88,9 @@ namespace DvMod.RemoteDispatch_BT
 
             switch (request.Url.Segments[1].TrimEnd('/'))
             {
+            case "assignments":
+                HandleAssignmentsRequest(context);
+                break;
             case "car":
                 HandleCarRequest(context);
                 break;
@@ -101,6 +105,10 @@ namespace DvMod.RemoteDispatch_BT
                 break;
             case "junctionState":
                 Render200(context, ContentTypes.Json, Junctions.GetJunctionStateJSON());
+                break;
+            case "permissions":
+                Render200(context, ContentTypes.Json,
+                    DispatchAssignments.GetPermissions(context.User?.Identity?.Name ?? "").ToString());
                 break;
             case "player":
                 var playerJson = PlayerData.GetPlayerDataJson();
@@ -124,6 +132,9 @@ namespace DvMod.RemoteDispatch_BT
             case "track":
                 Render200(context, ContentTypes.Json, await RailTracks.GetTrackPointJSON().ConfigureAwait(false));
                 break;
+            case "topology":
+                Render200(context, ContentTypes.Json, await RailTracks.GetTopologyJSON().ConfigureAwait(false));
+                break;
             case "trainset":
                 HandleTrainsetRequest(context);
                 break;
@@ -136,7 +147,7 @@ namespace DvMod.RemoteDispatch_BT
             }
         }
 
-        private static async void HandleCarRequest(HttpListenerContext context)
+        private static void HandleCarRequest(HttpListenerContext context)
         {
             var segments = context.Request.Url.Segments;
             if (segments.Length == 2 && context.Request.HttpMethod == "GET")
@@ -159,24 +170,84 @@ namespace DvMod.RemoteDispatch_BT
 
             if (segments.Length == 4 && segments[3] == "control" && context.Request.HttpMethod == "POST")
             {
-                var carGuid = segments[2].TrimEnd('/');
-                var controller = LocoControl.GetLocoController(carGuid);
-                if (controller == null)
-                {
-                    RenderEmpty(context, 404);
-                    return;
-                }
-                if (!Main.settings.permissions.HasLocoControlPermission(context.User.Identity.Name))
-                {
-                    RenderEmpty(context, 403);
-                    return;
-                }
-                var success = await Updater.RunOnMainThread(() =>
-                    LocoControl.RunCommand(controller, context.Request.QueryString)
-                ).ConfigureAwait(false);
-                RenderEmpty(context, success ? 204 : 400);
+                // Locomotive remote control is intentionally disabled. The webpage no
+                // longer exposes it, and direct requests must not reach the game.
+                Main.DebugLog(() => "Rejected disabled locomotive control request.");
+                RenderEmpty(context, 403);
+                return;
             }
             RenderEmpty(context, 404);
+        }
+
+        private static void RenderJson(HttpListenerContext context, int statusCode, JToken json)
+        {
+            context.Response.StatusCode = statusCode;
+            Render200(context, ContentTypes.Json, json.ToString(Newtonsoft.Json.Formatting.None));
+        }
+
+        private static void HandleAssignmentsRequest(HttpListenerContext context)
+        {
+            if (context.Request.HttpMethod != "POST")
+            {
+                RenderJson(context, 200, DispatchAssignments.GetSnapshot());
+                return;
+            }
+
+            var username = context.User?.Identity?.Name ?? "";
+            if (!Main.settings.permissions.HasAdministratorPermission(username))
+            {
+                RenderEmpty(context, 403);
+                return;
+            }
+
+            var query = context.Request.QueryString;
+            var op = query["op"] ?? "";
+            var jobId = query["job"] ?? "";
+            var player = query["player"] ?? "";
+            var playerName = query["playerName"] ?? "";
+            var session = query["session"] ?? "";
+            long revision;
+            if (!long.TryParse(query["revision"], out revision))
+                revision = -1;
+
+            if (!string.IsNullOrEmpty(session) && session != DispatchAssignments.WorldSession)
+            {
+                RenderJson(context, 409, new JObject
+                {
+                    ["error"] = "session",
+                    ["snapshot"] = DispatchAssignments.GetSnapshot(),
+                });
+                return;
+            }
+
+            string? error;
+            JObject snapshot;
+            switch (op)
+            {
+            case "assign":
+                snapshot = DispatchAssignments.Assign(jobId, player, playerName, revision, out error);
+                break;
+            case "unassign":
+                snapshot = DispatchAssignments.Unassign(jobId, revision, out error);
+                break;
+            case "release":
+                snapshot = DispatchAssignments.ReleasePlayer(player, revision, out error);
+                break;
+            default:
+                RenderEmpty(context, 400);
+                return;
+            }
+
+            if (error != null)
+            {
+                RenderJson(context, error == "revision" ? 409 : 400, new JObject
+                {
+                    ["error"] = error,
+                    ["snapshot"] = snapshot,
+                });
+                return;
+            }
+            RenderJson(context, 200, snapshot);
         }
 
         private static async Task HandleUpdatesRequest(HttpListenerContext context)
@@ -197,6 +268,34 @@ namespace DvMod.RemoteDispatch_BT
             return junctionId >= 0 && junctionId < RailTrackRegistry.Instance.OrderedJunctions.Length;
         }
 
+        private static List<(int id, int branch)> ParseJunctionPairs(string? pairs)
+        {
+            var validPairs = new List<(int id, int branch)>();
+            if (pairs == null || pairs.Length == 0)
+                return validPairs;
+            var skipped = 0;
+            foreach (var pair in pairs.Split(','))
+            {
+                var parts = pair.Split(':');
+                if (parts.Length == 2
+                    && int.TryParse(parts[0], out var id)
+                    && IsValidJunctionId(id)
+                    && int.TryParse(parts[1], out var branch)
+                    && branch >= 0
+                    && branch < RailTrackRegistry.Instance.OrderedJunctions[id].outBranches.Count)
+                {
+                    validPairs.Add((id, branch));
+                }
+                else
+                {
+                    skipped++;
+                }
+            }
+            if (skipped > 0)
+                Main.DebugLog(() => $"Skipped {skipped} invalid pair(s) in junction set request.");
+            return validPairs;
+        }
+
         private static async void HandleJunctionRequest(HttpListenerContext context)
         {
             var url = context.Request.Url;
@@ -204,6 +303,60 @@ namespace DvMod.RemoteDispatch_BT
             {
             case 2:
                 Render200(context, ContentTypes.Json, Junctions.GetJunctionPointJSON());
+                break;
+            case 3:
+                if (url.Segments[2].TrimEnd('/') == "set" && context.Request.HttpMethod == "POST")
+                {
+                    if (!Main.settings.permissions.HasJunctionPermission(context.User.Identity.Name))
+                    {
+                        RenderEmpty(context, 403);
+                        return;
+                    }
+                    var validPairs = ParseJunctionPairs(context.Request.QueryString["pairs"]);
+                    if (validPairs.Count == 0)
+                    {
+                        RenderEmpty(context, 400);
+                        return;
+                    }
+                    var junctionStates = await Updater.RunOnMainThread(() =>
+                    {
+                        var results = new JArray();
+                        foreach (var (id, branch) in validPairs)
+                        {
+                            Main.DebugLog(() => $"Setting J-{id} to branch {branch}.");
+                            try
+                            {
+                                var junction = RailTrackRegistry.Instance.OrderedJunctions[id];
+                                if (junction.selectedBranch != branch)
+                                    junction.Switch(Junction.SwitchMode.REGULAR, (byte)branch);
+                                var actual = junction.selectedBranch;
+                                results.Add(new JObject
+                                {
+                                    ["junctionId"] = id,
+                                    ["requestedBranch"] = branch,
+                                    ["selectedBranch"] = actual,
+                                    ["success"] = actual == branch,
+                                });
+                            }
+                            catch (Exception e)
+                            {
+                                results.Add(new JObject
+                                {
+                                    ["junctionId"] = id,
+                                    ["requestedBranch"] = branch,
+                                    ["selectedBranch"] = null,
+                                    ["success"] = false,
+                                    ["error"] = e.GetType().Name,
+                                });
+                                Main.DebugLog(() => $"Failed to set J-{id} to branch {branch}: {e.Message}");
+                            }
+                        }
+                        return results;
+                    }).ConfigureAwait(false);
+                    Render200(context, junctionStates);
+                    return;
+                }
+                RenderEmpty(context, 404);
                 break;
             case 4:
                 var junctionIdString = url.Segments[2].TrimEnd('/');
@@ -320,6 +473,8 @@ namespace DvMod.RemoteDispatch_BT
         private static void Render200(HttpListenerContext context, string contentType, string s)
         {
             context.Response.ContentType = contentType;
+            if (contentType == ContentTypes.Json)
+                context.Response.Headers.Add("Cache-Control", "no-store");
             var bytes = Encoding.UTF8.GetBytes(s);
             if (bytes.Length > 128 && (context.Request.Headers.GetValues("Accept-Encoding")?.Contains("gzip") ?? false))
             {

@@ -2,7 +2,7 @@
   "Id": "RemoteDispatch BT",
   "DisplayName": "Remote Dispatch BT",
   "Author": "Zeibach & BSTech",
-  "Version": "1.0.0",
+  "Version": "1.1.0",
   "AssemblyName": "RemoteDispatch_BT.dll",
   "EntryMethod": "DvMod.RemoteDispatch_BT.Main.Load",
   "LoadAfter": [ "PersistentJobsMod" ],

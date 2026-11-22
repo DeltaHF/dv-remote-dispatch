@@ -18,9 +18,7 @@
   <div class="leaflet-sidebar-tabs">
     <ul role="tablist">
       <li><a href="#carsTab" role="tab"><i class="fas fa-train" title="Cars"></i></a></li>
-      <li><a href="#playersTab" role="tab"><i class="fas fa-users" title="Players"></i></a></li>
-      <li><a href="#jobsTab" role="tab"><i class="fas fa-clipboard-list" title="Jobs"></i></a></li>
-      <li><a href="#locoControlTab" role="tab"><i class="fas fa-gamepad" title="Loco Control"></i></a></li>
+      <li><a href="#dispatchTab" role="tab"><i class="fas fa-users-cog" title="Dispatch"></i></a></li>
       <li><a href="#settingsTab" role="tab"><i class="fas fa-cog" title="Settings"></i></a></li>
     </ul>
   </div>
@@ -33,17 +31,25 @@
         <tbody id="carListBody"></tbody>
       </table>
     </div>
-    <div class="leaflet-sidebar-pane" id="playersTab">
-      <table id="playerList"><tbody id="playerListBody"></tbody></table>
+    <div class="leaflet-sidebar-pane dispatch-pane" id="dispatchTab">
+      <div id="dispatchPermission" class="dispatch-permission" hidden></div>
+      <div class="dispatch-grid">
+        <section class="dispatch-column dispatch-players">
+          <header class="dispatch-header">在线玩家</header>
+          <div id="dispatchPlayerList" class="dispatch-scroll"></div>
+        </section>
+        <section class="dispatch-column dispatch-jobs">
+          <header class="dispatch-header">任务单 <span id="dispatchJobCount" class="dispatch-count"></span></header>
+          <div class="dispatch-filters">
+            <input id="jobSearchText" type="text" placeholder="Search...">
+            <label><input id="jobActiveOnly" type="checkbox"> active only</label>
+          </div>
+          <div id="dispatchJobList" class="dispatch-scroll"></div>
+        </section>
+      </div>
+      <div id="dispatchToast" class="dispatch-toast" role="status"></div>
     </div>
-    <div class="leaflet-sidebar-pane" id="jobsTab">
-      <input id="jobSearchText" type="text" placeholder="Search...">
-      <label>active only<input id="jobActiveOnly" type="checkbox"></label>
-      <table id="jobList">
-        <tbody id="jobListBody"></tbody>
-      </table>
-    </div>
-    <div class="leaflet-sidebar-pane" id="locoControlTab">
+    <div class="leaflet-sidebar-pane" id="locoControlTab" hidden>
       <div id="locoControlIndicators">
         <label for="locoControlLocoId">L-</label>
         <select id="locoControlLocoId"></select>
@@ -135,6 +141,14 @@
           <td><input id="trackWidthInput" type="range" min="1" max="10" step="1" value="3"></td>
         </tr>
         <tr>
+          <th><label for="routeOpacityInput">Route opacity</label></th>
+          <td><input id="routeOpacityInput" type="range" min="0" max="100" step="1" value="50"></td>
+        </tr>
+        <tr>
+          <th><label for="routeColorInput">Route color</label></th>
+          <td><input id="routeColorInput" type="color" value="#c44dff"></td>
+        </tr>
+        <tr>
           <th><label for="stationFontSizeInput">Station font size</label></th>
           <td><input id="stationFontSizeInput" type="range" min="8" max="32" step="1" value="14"></td>
         </tr>
@@ -167,6 +181,8 @@
   </div>
 </div>
 <div id="map" class="dark" style="height:100vh"></div>
+<script src="res/route.js"></script>
+<script src="res/dispatch.js"></script>
 <script src="res/main.js"></script>
 </body>
 </html>
