@@ -7,6 +7,8 @@
     "playerSize": 1,
     "playerColor": "#0000ff",
     "trackWidth": 3,
+    "routeOpacity": 0.5,
+    "routeColor": "#c44dff",
     "stationFontSize": 14,
     "stationColor": "#ffffff"
   }

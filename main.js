@@ -1,4 +1,6 @@
 const initialZoom = 20;
+const MIN_ZOOM = 13;
+const MAX_ZOOM = 24;
 const earthCircumference = 40e6;
 const metersToDegrees = 360 / earthCircumference;
 
@@ -18,6 +20,10 @@ const defaultSettings = {
   mapScale: 100,
   showMapBackground: true,
   showStationNames: true,
+  routeOpacity: 0.5,
+  routeColor: '#c44dff',
+  pinnedJob: '',
+  jobOrder: [],
 };
 const settings = { ...defaultSettings };
 
@@ -50,12 +56,17 @@ const canvasRenderer = L.canvas();
 const mapBounds = [[0, 0], [0.15, 0.15]];
 const maxBounds = [[-0.02, -0.02], [0.17, 0.17]];
 const map = L.map('map', {
-  minZoom: 13,
+  minZoom: MIN_ZOOM,
+  maxZoom: MAX_ZOOM,
   maxBounds: maxBounds,
+  maxBoundsViscosity: 1.0,
+  inertia: false,
+  bounceAtZoomLimits: false,
   tap: false,
   zoomControl: false,
+  zoomSnap: 0,
 })
-.fitBounds(mapBounds);
+.fitBounds(mapBounds, { maxZoom: initialZoom });
 map.createPane('worldMapPane');
 map.getPane('worldMapPane').style.zIndex = 1;
 
@@ -155,10 +166,26 @@ function applyPlayerSettings() {
     if (name)
       name.style.color = color;
   });
+  lastPlayerListSignature = '';
+  updateDispatchListsIfPlayersChanged();
 }
 
 function applyTrackSettings() {
   trackPolyLines.forEach(polyline => polyline.setStyle({ weight: settings.trackWidth }));
+}
+
+function applyRouteStyle() {
+  if (selectedJobRouteLine)
+    selectedJobRouteLine.setStyle({
+      color: settings.routeColor,
+      opacity: settings.routeOpacity,
+      weight: settings.trackWidth + 2,
+    });
+  boundRouteGroup.setStyle({
+    color: settings.routeColor,
+    opacity: settings.routeOpacity,
+    weight: settings.trackWidth + 2,
+  });
 }
 
 function applyStationLabelSettings() {
@@ -202,6 +229,23 @@ function initSettingsUI() {
     settings.trackWidth = Number(e.target.value);
     saveSettings();
     applyTrackSettings();
+    applyRouteStyle();
+  });
+
+  const routeOpacityInput = document.getElementById('routeOpacityInput');
+  routeOpacityInput.value = settings.routeOpacity * 100;
+  routeOpacityInput.addEventListener('input', e => {
+    settings.routeOpacity = e.target.value / 100;
+    saveSettings();
+    applyRouteStyle();
+  });
+
+  const routeColorInput = document.getElementById('routeColorInput');
+  routeColorInput.value = settings.routeColor;
+  routeColorInput.addEventListener('input', e => {
+    settings.routeColor = e.target.value;
+    saveSettings();
+    applyRouteStyle();
   });
 
   const stationFontSizeInput = document.getElementById('stationFontSizeInput');
@@ -267,7 +311,7 @@ function initSettingsUI() {
 
   applyStationLabelSettings();
 }
-L.control.scale().addTo(map);
+L.control.scale({ position: 'bottomright' }).addTo(map);
 const zoomHome = new L.Control.ZoomHome({
   position: 'topleft',
   zoomInText: '<i class="fas fa-search-plus"></i>',
@@ -276,33 +320,124 @@ const zoomHome = new L.Control.ZoomHome({
   zoomOutText: '<i class="fas fa-search-minus"></i>',
 }).addTo(map);
 
-let markerToFollow;
-map.addEventListener('mousedown', stopFollowing);
-map.on('drag', () => {
-    map.fitBounds(map.getBounds());
+/////////////////////
+// vertical zoom level control
+
+const zoomLevelControl = L.control({ position: 'bottomright' });
+zoomLevelControl.onAdd = function () {
+  const container = L.DomUtil.create('div', 'zoomLevelControl');
+  container.innerHTML =
+    '<div class="zoomLevelValue">20</div>' +
+    '<div class="zoomLevelTrack" role="slider" tabindex="0" aria-label="Map zoom level" aria-valuemin="13" aria-valuemax="24">' +
+      '<div class="zoomLevelFill"></div><div class="zoomLevelThumb"></div>' +
+    '</div>';
+  L.DomEvent.disableClickPropagation(container);
+  L.DomEvent.disableScrollPropagation(container);
+
+  const track = container.querySelector('.zoomLevelTrack');
+  const valueEl = container.querySelector('.zoomLevelValue');
+  const fillEl = container.querySelector('.zoomLevelFill');
+  const thumbEl = container.querySelector('.zoomLevelThumb');
+
+  function render(zoom) {
+    const ratio = (MAX_ZOOM - zoom) / (MAX_ZOOM - MIN_ZOOM);
+    const trackHeight = track.clientHeight || 130;
+    valueEl.textContent = zoom.toFixed(1);
+    thumbEl.style.top = `${Math.max(0, Math.min(trackHeight, ratio * trackHeight))}px`;
+    fillEl.style.height = `${Math.max(0, Math.min(trackHeight, (1 - ratio) * trackHeight))}px`;
+    track.setAttribute('aria-valuenow', zoom.toFixed(1));
+  }
+
+  function zoomFromPointer(event) {
+    const rect = track.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+    return MAX_ZOOM - ratio * (MAX_ZOOM - MIN_ZOOM);
+  }
+
+  let dragging = false;
+  function applyPointer(event) {
+    stopFollowing();
+    map.setZoom(zoomFromPointer(event), { animate: false });
+    render(map.getZoom());
+  }
+
+  track.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    dragging = true;
+    track.setPointerCapture(e.pointerId);
+    applyPointer(e);
+  });
+  track.addEventListener('pointermove', e => {
+    if (dragging) applyPointer(e);
+  });
+  track.addEventListener('pointerup', e => {
+    dragging = false;
+    if (track.hasPointerCapture(e.pointerId))
+      track.releasePointerCapture(e.pointerId);
+  });
+  track.addEventListener('pointercancel', () => { dragging = false; });
+  track.addEventListener('wheel', e => {
+    e.preventDefault();
+    stopFollowing();
+    map.setZoom(map.getZoom() + (e.deltaY < 0 ? 0.5 : -0.5), { animate: false });
+  }, { passive: false });
+  track.addEventListener('keydown', e => {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown' && e.key !== 'PageUp' && e.key !== 'PageDown')
+      return;
+    e.preventDefault();
+    const step = e.key === 'PageUp' || e.key === 'PageDown' ? 2 : 0.5;
+    stopFollowing();
+    map.setZoom(map.getZoom() + (e.key === 'ArrowUp' || e.key === 'PageUp' ? step : -step), { animate: false });
+  });
+
+  container.updateZoom = () => render(map.getZoom());
+  render(map.getZoom());
+  return container;
+};
+zoomLevelControl.addTo(map);
+
+function updateZoomLevelControl() {
+  const control = zoomLevelControl.getContainer();
+  if (control && control.updateZoom)
+    control.updateZoom();
+}
+
+let markerToFollow = null;
+let lastMapDragEnd = 0;
+
+map.on('dragstart', () => {
+  lastMapDragEnd = performance.now();
+  stopFollowing();
 });
-map.on('zoomanim', () => {
-    map.fitBounds(map.getBounds());
+map.on('dragend', () => {
+  lastMapDragEnd = performance.now();
 });
+map.on('zoomstart', stopFollowing);
+map.on('zoom zoomend', updateZoomLevelControl);
+map.getContainer().addEventListener('pointerdown', stopFollowing, { passive: true });
+map.getContainer().addEventListener('pointercancel', stopFollowing, { passive: true });
+window.addEventListener('blur', stopFollowing);
 
 function getMarkerCenter(marker) {
   return marker.getLatLng ? marker.getLatLng() : marker.getBounds().getCenter();
 }
 
 function setMarkerToFollow(marker) {
+  if (!marker)
+    return;
   markerToFollow = marker;
-  map.panTo(getMarkerCenter(marker));
+  map.panTo(getMarkerCenter(marker), { animate: false });
 }
 
 function stopFollowing() {
-  markerToFollow = undefined;
+  markerToFollow = null;
 }
 
 function zoomToAllPlayers() {
   const bounds = new L.LatLngBounds();
   playerMarkers.forEach(marker => bounds.extend(marker.getLatLng()));
   if (bounds.isValid())
-    map.fitBounds(bounds, { maxZoom: initialZoom });
+    frameMapBounds(bounds, { maxZoom: initialZoom });
 }
 
 map.addEventListener('zoomhome', () => {
@@ -330,12 +465,20 @@ document.getElementById('carColorDropdown')
   .addEventListener('input', () => {
     updateAllCarColors();
     updateJobListColors();
+    applyRouteStyle();
   });
 
 /////////////////////
 // sidebar
 
 const sidebar = L.control.sidebar({ autopan: true, container: 'sidebar' }).addTo(map);
+const sidebarElement = document.getElementById('sidebar');
+function updateSidebarTabCount() {
+  const count = sidebarElement.querySelectorAll('.leaflet-sidebar-tabs ul > li').length;
+  sidebarElement.style.setProperty('--rd-sidebar-tab-count', String(count || 1));
+}
+updateSidebarTabCount();
+sidebar.on('opening', stopFollowing);
 
 const tablesort = new Tablesort(document.getElementById('carList'));
 const carListBody = document.getElementById('carListBody');
@@ -368,10 +511,8 @@ function updateCarRow(carId) {
 /////////////////////
 // jobs
 
-const CarsPerRow = 3;
 const allJobData = new Map();
 const carJobIds = new Map();
-const jobListBody = document.getElementById('jobListBody');
 
 // https://www.npmjs.com/package/string-hash
 function stringHash(str) {
@@ -425,152 +566,679 @@ function colorForJobId(jobId) {
 }
 
 function yardIdForTrack(trackId) {
-  return trackId.split('-')[0];
+  return String(trackId || '').split('-')[0];
 }
 
 function jobMatchesFilter(jobId, jobData) {
-    const testText = document.getElementById('jobSearchText').value.toUpperCase();
-    const activeOnly = document.getElementById('jobActiveOnly').checked;
-  function taskFields(task) { return [task.startTrack, task.destinationTrack].concat(task.cars); }
-  const fields = [jobId].concat(jobData.tasks.flatMap(taskFields));
-  return fields.some(field => field.includes(testText)) && (!activeOnly || jobData.isActive);
+  const testText = document.getElementById('jobSearchText').value.toUpperCase();
+  const activeOnly = document.getElementById('jobActiveOnly').checked;
+  function taskFields(task) {
+    return [task.startTrack, task.destinationTrack].concat(task.cars || []);
+  }
+  const fields = [jobId].concat((jobData.tasks || []).flatMap(taskFields).filter(Boolean));
+  return fields.some(field => String(field).toUpperCase().includes(testText))
+    && (!activeOnly || jobData.isActive);
 }
 
-function jobElem(jobId, jobData) {
-  function replaceHyphens(s) { return s.replaceAll('-', '\u2011'); }
+function replaceHyphens(value) {
+  return String(value || '').replaceAll('-', '\u2011');
+}
 
-  const tbody = document.createElement('tbody');
-  tbody.setAttribute('id', `jobList-${jobId}`);
+/////////////////////
+// dispatch shared state
 
-  let row = document.createElement('tr');
-  const jobIdCell = document.createElement('th'); 
-  jobIdCell.setAttribute('colspan', CarsPerRow);
-  jobIdCell.classList.add("jobList-jobHeader");
-  jobIdCell.style.background = colorForJobId(jobId);
-  jobIdCell.textContent = jobId;
+const assignmentsState = {
+  session: '',
+  revision: 0,
+  byJob: new Map(),
+  byPlayer: new Map(),
+};
+let permissionsState = { username: '', administrator: false, junctions: false };
+const expandedJobIds = new Set();
+let draggedJobId = null;
+let cardPointerDown = false;
+let pendingDispatchRefresh = null;
+let dispatchMessageTimer;
 
-  jobLicensesDiv = document.createElement('div');
-  jobLicensesDiv.classList.add('jobList-licenses');
-  for (const license of jobData.requiredLicenses) {
-      jobLicensesDiv.innerHTML += `<span class="jobList-license"><div class="jobList-licenseBackground"></div><img src="res/licenses.${license}.png" title="${license}"></span>`;
+const poolList = new DispatchLib.VirtualList(document.getElementById('dispatchJobList'), {
+  gap: 6,
+  overscan: 320,
+  estimateHeight: 60,
+  render: item => createJobCard(item.jobId, 'pool'),
+});
+const playersList = new DispatchLib.VirtualList(document.getElementById('dispatchPlayerList'), {
+  gap: 7,
+  overscan: 320,
+  estimateHeight: 100,
+  render: item => createPlayerCard(item.playerId),
+});
+
+function hasJobCardTarget(target) {
+  return target instanceof Element && !!target.closest('.jobCard');
+}
+
+function flushPendingDispatchRefresh() {
+  if (draggedJobId || cardPointerDown || pendingDispatchRefresh === null)
+    return;
+  const force = pendingDispatchRefresh;
+  pendingDispatchRefresh = null;
+  updateDispatchLists(force);
+}
+
+function clearCardPointerDown() {
+  cardPointerDown = false;
+  flushPendingDispatchRefresh();
+}
+
+function endJobDrag() {
+  draggedJobId = null;
+  cardPointerDown = false;
+  document.querySelectorAll('.playerCard.drop-active')
+    .forEach(el => el.classList.remove('drop-active'));
+  document.querySelectorAll('.jobCard.drop-before, .jobCard.drop-after')
+    .forEach(el => el.classList.remove('drop-before', 'drop-after'));
+  flushPendingDispatchRefresh();
+}
+
+document.addEventListener('pointerdown', e => {
+  if (hasJobCardTarget(e.target))
+    cardPointerDown = true;
+}, true);
+document.addEventListener('pointerup', clearCardPointerDown, true);
+document.addEventListener('pointercancel', clearCardPointerDown, true);
+window.addEventListener('blur', clearCardPointerDown);
+
+function showDispatchMessage(text, isError) {
+  const toast = document.getElementById('dispatchToast');
+  toast.textContent = text;
+  toast.classList.toggle('error', !!isError);
+  toast.classList.add('visible');
+  clearTimeout(dispatchMessageTimer);
+  dispatchMessageTimer = setTimeout(() => toast.classList.remove('visible'), 5000);
+}
+
+function rebuildAssignmentIndexes() {
+  const indexed = DispatchLib.indexAssignments(Array.from(assignmentsState.byJob.values()));
+  assignmentsState.byJob = indexed.byJob;
+  assignmentsState.byPlayer = indexed.byPlayer;
+}
+
+function applyAssignmentSnapshot(snapshot) {
+  if (!snapshot || !Array.isArray(snapshot.assignments))
+    return;
+  const previousSession = assignmentsState.session;
+  const incomingSession = snapshot.session || '';
+  const incomingRevision = Number.isFinite(snapshot.revision) ? snapshot.revision : 0;
+  // The initial GET and the long-poll can resolve out of order. Never let an
+  // older snapshot overwrite newer state from the same world.
+  if (previousSession && previousSession === incomingSession &&
+      incomingRevision <= assignmentsState.revision)
+    return;
+  assignmentsState.session = incomingSession;
+  assignmentsState.revision = incomingRevision;
+  assignmentsState.byJob.clear();
+  assignmentsState.byPlayer.clear();
+  for (const assignment of snapshot.assignments) {
+    if (!assignment || !assignment.jobId || !assignment.player)
+      continue;
+    assignmentsState.byJob.set(assignment.jobId, {
+      jobId: assignment.jobId,
+      player: assignment.player,
+      playerName: assignment.playerName || assignment.player,
+      order: Number(assignment.order) || 0,
+    });
   }
-  jobIdCell.appendChild(jobLicensesDiv);
+  rebuildAssignmentIndexes();
 
-  row.appendChild(jobIdCell);
-  tbody.appendChild(row);
+  if (previousSession && previousSession !== assignmentsState.session) {
+    expandedJobIds.clear();
+    selectedJobId = null;
+    clearJobSelectionUI();
+    jobRouteCache.clear();
+    showDispatchMessage('游戏世界已更换，正在刷新调度页面。', true);
+    setTimeout(() => location.reload(), 1200);
+  }
+  updateDispatchLists(true);
+  updateBoundRoutes();
+}
 
-  row = document.createElement('tr');
-  jobMassCell = document.createElement('th');
-  jobMassCell.textContent = `${jobData.mass.toFixed(0)} t`;
-  jobLengthCell = document.createElement('th');
-  jobLengthCell.textContent = `${jobData.length.toFixed(0)} m`;
-  jobPaymentCell = document.createElement('th');
-  jobPaymentCell.textContent =
-    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
-    .format(jobData.basePayment);
-  row.append(jobMassCell, jobLengthCell, jobPaymentCell);
-  tbody.appendChild(row);
+function applyPermissions(permissions) {
+  if (!permissions)
+    return;
+  const next = {
+    username: permissions.username || '',
+    administrator: !!permissions.administrator,
+    junctions: !!permissions.junctions,
+  };
+  const changed = next.username !== permissionsState.username ||
+    next.administrator !== permissionsState.administrator ||
+    next.junctions !== permissionsState.junctions;
+  permissionsState = next;
+  updatePermissionBanner();
+  if (changed)
+    updateDispatchLists(true);
+}
 
-  jobData.tasks.forEach(task => {
-    row = document.createElement('tr');
-    const startTrackCell = document.createElement('th');
-    startTrackCell.classList.add('interactive');
-    startTrackCell.textContent = replaceHyphens(task.startTrack);
-    startTrackCell.style.background = colorForYardId(yardIdForTrack(task.startTrack));
-    startTrackCell.title = stationNameForYard(yardIdForTrack(task.startTrack)) || '';
-    startTrackCell.addEventListener('click', () => scrollToTrack(task.startTrack));
-    row.appendChild(startTrackCell);
+function updatePermissionBanner() {
+  const banner = document.getElementById('dispatchPermission');
+  if (!banner)
+    return;
+  const name = permissionsState.username || '未知';
+  banner.hidden = false;
+  banner.classList.toggle('readonly', !permissionsState.administrator);
+  if (permissionsState.administrator) {
+    banner.innerHTML = '';
+    const strong = document.createElement('strong');
+    strong.textContent = name;
+    banner.append('管理员：', strong, '；可以把任务单拖到左侧玩家卡片。');
+  } else {
+    banner.innerHTML = '';
+    const strong = document.createElement('strong');
+    strong.textContent = name;
+    banner.append('当前网页身份：', strong, '；只读模式。请在 UMM 设置中为该名称勾选 Administrator，才能拖拽分配任务单。');
+  }
+}
 
-    const arrowCell = document.createElement('th');
-    arrowCell.textContent = "➜";
-    arrowCell.classList.add('jobList-trackSeparator');
-    row.appendChild(arrowCell);
-
-    const destinationTrackCell = document.createElement('th');
-    destinationTrackCell.classList.add('interactive');
-    destinationTrackCell.textContent = replaceHyphens(task.destinationTrack);
-    destinationTrackCell.style.background = colorForYardId(yardIdForTrack(task.destinationTrack));
-    destinationTrackCell.title = stationNameForYard(yardIdForTrack(task.destinationTrack)) || '';
-    destinationTrackCell.addEventListener('click', () => scrollToTrack(task.destinationTrack));
-    row.appendChild(destinationTrackCell);
-
-    for (let carIndex = 0; carIndex < task.cars.length; carIndex++) {
-      if (carIndex % CarsPerRow == 0) {
-        tbody.appendChild(row);
-        row = document.createElement('tr');
-      }
-      const carId = task.cars[carIndex];
-      const carCell = document.createElement('td');
-      carCell.classList.add(`jobList-carCell-${carId}`);
-      carCell.classList.add('interactive');
-      carCell.textContent = carId;
-      carCell.addEventListener('click', () => followCar(carId, false));
-      row.appendChild(carCell);
+function requestAssignment(op, params) {
+  if (!permissionsState.administrator) {
+    showDispatchMessage('没有 Administrator 权限，无法修改任务分配。', true);
+    return;
+  }
+  const query = new URLSearchParams(Object.assign({
+    op: op,
+    revision: String(assignmentsState.revision),
+    session: assignmentsState.session,
+  }, params || {}));
+  fetch(new URL(`/assignments?${query}`, location), { method: 'POST' })
+  .then(async resp => {
+    let data = null;
+    try { data = await resp.json(); } catch (e) {}
+    if (resp.ok && data) {
+      applyAssignmentSnapshot(data);
+      return;
     }
-    if (row.children.length < CarsPerRow)
-      // add filler cells
-      for (let i = 0; i < CarsPerRow - (task.cars.length % CarsPerRow); i++)
-        row.appendChild(document.createElement('td'));
-    tbody.appendChild(row);
+    if (resp.status == 403) {
+      permissionsState.administrator = false;
+      updateDispatchLists(true);
+      showDispatchMessage('没有 Administrator 权限，无法修改任务分配。', true);
+      return;
+    }
+    if (data && data.snapshot)
+      applyAssignmentSnapshot(data.snapshot);
+    if (data && data.error === 'session')
+      showDispatchMessage('游戏世界已更换，请刷新调度页面。', true);
+    else if (resp.status == 409)
+      showDispatchMessage('任务分配已被其他管理员更新，请重试。', true);
+    else
+      showDispatchMessage('任务分配失败。', true);
+  })
+  .catch(() => showDispatchMessage('任务分配请求失败。', true));
+}
+
+function assignedJobsForPlayer(playerId) {
+  return DispatchLib.assignedJobIds(assignmentsState, playerId, jobId => allJobData.has(jobId));
+}
+
+function firstStageJobForPlayer(playerId) {
+  const jobs = assignedJobsForPlayer(playerId);
+  return jobs.length > 0 ? jobs[0] : null;
+}
+
+function playerDisplayName(playerId) {
+  const player = lastPlayerData[playerId];
+  return (player && player.displayName) || assignmentsState.byPlayer.get(playerId)?.playerName || playerId;
+}
+
+function createLicenseContainer(jobData) {
+  const div = document.createElement('div');
+  div.className = 'jobCard-licenses';
+  for (const license of (jobData.requiredLicenses || [])) {
+    const span = document.createElement('span');
+    span.className = 'jobCard-license';
+    span.innerHTML =
+      `<div class="jobCard-licenseBackground"></div>` +
+      `<img src="res/licenses.${license}.png" title="${license}">`;
+    div.appendChild(span);
+  }
+  return div;
+}
+
+function createTrackBadge(trackId) {
+  const span = document.createElement('span');
+  span.className = 'jobCard-track interactive';
+  const hasTrack = !!trackId;
+  span.textContent = hasTrack ? replaceHyphens(trackId) : '—';
+  const yardId = yardIdForTrack(trackId);
+  span.style.background = hasTrack ? colorForYardId(yardId) : '#ddd';
+  span.title = stationNameForYard(yardId) || '';
+  if (hasTrack)
+    span.addEventListener('click', e => { e.stopPropagation(); scrollToTrack(trackId); });
+  return span;
+}
+
+function createRouteElement(startTrack, destTrack) {
+  const route = document.createElement('div');
+  route.className = 'jobCard-route';
+  const arrow = document.createElement('span');
+  arrow.className = 'jobCard-arrow';
+  arrow.textContent = '➜';
+  route.append(createTrackBadge(startTrack), arrow, createTrackBadge(destTrack));
+  return route;
+}
+
+function createCarGrid(task, jobId) {
+  const carIds = task.cars || [];
+  if (carIds.length === 0)
+    return null;
+  const grid = document.createElement('div');
+  grid.className = 'jobCard-carGrid';
+  for (let start = 0; start < carIds.length; start += 3) {
+    const row = document.createElement('div');
+    row.className = 'jobCard-carRow';
+    for (let column = 0; column < 3; column++) {
+      const carId = carIds[start + column];
+      const cell = document.createElement('span');
+      cell.className = 'jobCard-carCell';
+      if (carId) {
+        cell.classList.add('jobCard-car', `jobCard-car-${carId}`, 'interactive');
+        cell.textContent = carId;
+        cell.addEventListener('click', e => {
+          e.stopPropagation();
+          selectJob(jobId, { frame: false });
+          followCar(carId, false);
+        });
+      }
+      row.appendChild(cell);
+    }
+    grid.appendChild(row);
+  }
+  return grid;
+}
+
+function createJobCard(jobId, context) {
+  const jobData = allJobData.get(jobId);
+  const card = document.createElement('article');
+  card.className = 'jobCard';
+  card.dataset.jobId = jobId;
+
+  const header = document.createElement('div');
+  header.className = 'jobCard-header';
+  header.style.background = colorByHashing(jobId);
+  header.title = permissionsState.administrator
+    ? '拖拽到左侧玩家卡片可分配任务单；点击可查看路线'
+    : '需要 Administrator 权限才能拖拽分配任务单';
+  const title = document.createElement('span');
+  title.className = 'jobCard-title';
+  title.textContent = jobId;
+  header.appendChild(title);
+  header.appendChild(createLicenseContainer(jobData || {}));
+  if (context === 'pool') {
+    const pinned = settings.pinnedJob === jobId;
+    const pin = document.createElement('button');
+    pin.type = 'button';
+    pin.className = 'jobCard-pin' + (pinned ? ' active' : '');
+    pin.title = pinned ? '取消置顶' : '置顶任务单';
+    pin.textContent = '📌';
+    pin.addEventListener('click', e => {
+      e.stopPropagation();
+      settings.pinnedJob = pinned ? '' : jobId;
+      saveSettings();
+      updateDispatchLists(true);
+    });
+    header.appendChild(pin);
+  }
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'jobCard-toggle';
+  toggle.title = expandedJobIds.has(jobId) ? '折叠任务单' : '展开任务单';
+  toggle.textContent = expandedJobIds.has(jobId) ? '▾' : '▸';
+  header.appendChild(toggle);
+  header.addEventListener('click', () => selectJob(jobId));
+  toggle.addEventListener('click', e => {
+    e.stopPropagation();
+    if (expandedJobIds.has(jobId))
+      expandedJobIds.delete(jobId);
+    else
+      expandedJobIds.add(jobId);
+    body.hidden = !expandedJobIds.has(jobId);
+    toggle.textContent = expandedJobIds.has(jobId) ? '▾' : '▸';
+    toggle.title = expandedJobIds.has(jobId) ? '折叠任务单' : '展开任务单';
+    refreshDispatchCard(jobId);
+  });
+  card.appendChild(header);
+
+  const summary = document.createElement('div');
+  summary.className = 'jobCard-summary';
+  summary.title = '点击查看整单路线';
+  card.appendChild(summary);
+
+  const body = document.createElement('div');
+  body.className = 'jobCard-body';
+  body.hidden = !expandedJobIds.has(jobId);
+  body.addEventListener('click', e => {
+    if (e.target === body)
+      selectJob(jobId);
+  });
+  card.appendChild(body);
+
+  if (!jobData) {
+    summary.textContent = '任务单暂不可用';
+    return card;
+  }
+
+  const tasks = jobData.tasks || [];
+  const startTrack = tasks.length > 0 ? tasks[0].startTrack : '';
+  const destTrack = tasks.length > 0 ? tasks[tasks.length - 1].destinationTrack : '';
+  const summaryRoute = createRouteElement(startTrack, destTrack);
+  summaryRoute.classList.add('jobCard-summaryRoute');
+  const facts = document.createElement('div');
+  facts.className = 'jobCard-summaryFacts';
+  facts.innerHTML =
+    `<span title="总重量">${Number(jobData.mass || 0).toFixed(0)} t</span>` +
+    `<span title="总长度">${Number(jobData.length || 0).toFixed(0)} m</span>` +
+    `<span title="基础报酬">${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(jobData.basePayment || 0)}</span>`;
+  summary.append(summaryRoute, facts);
+  summary.addEventListener('click', () => selectJob(jobId));
+
+  for (const task of tasks) {
+    const step = document.createElement('section');
+    step.className = 'jobCard-step';
+    const stepRoute = createRouteElement(task.startTrack, task.destinationTrack);
+    stepRoute.classList.add('jobCard-stepRoute');
+    step.appendChild(stepRoute);
+
+    const carGrid = createCarGrid(task, jobId);
+    if (carGrid)
+      step.appendChild(carGrid);
+    body.appendChild(step);
+  }
+
+  if (permissionsState.administrator) {
+    card.draggable = true;
+    card.addEventListener('dragstart', e => {
+      if (!permissionsState.administrator) {
+        e.preventDefault();
+        return;
+      }
+      draggedJobId = jobId;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', jobId);
+      card.classList.add('dragging');
+    });
+    card.addEventListener('dragend', () => {
+      card.classList.remove('dragging');
+      endJobDrag();
+    });
+    if (context === 'pool') {
+      card.addEventListener('dragover', e => {
+        if (!draggedJobId || draggedJobId === jobId)
+          return;
+        if (assignmentsState.byJob.has(draggedJobId))
+          return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = 'move';
+        const rect = card.getBoundingClientRect();
+        const after = e.clientY > rect.top + rect.height / 2;
+        card.classList.toggle('drop-after', after);
+        card.classList.toggle('drop-before', !after);
+      });
+      card.addEventListener('dragleave', e => {
+        if (!card.contains(e.relatedTarget))
+          card.classList.remove('drop-before', 'drop-after');
+      });
+      card.addEventListener('drop', e => {
+        if (!draggedJobId || draggedJobId === jobId)
+          return;
+        if (assignmentsState.byJob.has(draggedJobId))
+          return;
+        e.preventDefault();
+        e.stopPropagation();
+        const after = card.classList.contains('drop-after');
+        card.classList.remove('drop-before', 'drop-after');
+        reorderPoolJob(draggedJobId, jobId, after);
+        endJobDrag();
+      });
+    }
+  } else {
+    card.classList.add('drag-disabled');
+    card.title = '需要 Administrator 权限才能拖拽分配';
+  }
+
+  return card;
+}
+
+function refreshDispatchCard(jobId) {
+  poolList.refreshItem(jobId);
+  playersList.refreshItem(jobId);
+}
+
+function createPlayerCard(playerId) {
+  const card = document.createElement('article');
+  card.className = 'playerCard';
+  card.dataset.playerId = playerId;
+  const playerData = lastPlayerData[playerId];
+  const name = playerDisplayName(playerId);
+  const jobs = assignedJobsForPlayer(playerId);
+
+  const header = document.createElement('div');
+  header.className = 'playerCard-header';
+  header.title = '点击按该玩家所有绑定任务取景';
+  const swatch = document.createElement('span');
+  swatch.className = 'playerColorSwatch';
+  swatch.style.background = getPlayerColor(playerData) || 'transparent';
+  const nameEl = document.createElement('span');
+  nameEl.className = 'playerCard-name';
+  nameEl.textContent = name;
+  const count = document.createElement('span');
+  count.className = 'playerCard-count';
+  count.textContent = `${jobs.length} 单`;
+  const release = document.createElement('button');
+  release.type = 'button';
+  release.className = 'playerCard-release';
+  release.textContent = '解散任务单';
+  release.disabled = jobs.length === 0 || !permissionsState.administrator;
+  release.title = permissionsState.administrator ? '解除该玩家全部任务绑定，任务回到右侧任务栏' : '需要 Administrator 权限';
+  release.addEventListener('click', e => {
+    e.stopPropagation();
+    requestAssignment('release', { player: playerId });
+  });
+  header.append(swatch, nameEl, count, release);
+  header.addEventListener('click', () => framePlayerJobs(playerId));
+  card.appendChild(header);
+
+  const actions = document.createElement('div');
+  actions.className = 'playerCard-actions';
+  const connect = document.createElement('button');
+  connect.type = 'button';
+  connect.textContent = '一键联通';
+  connect.disabled = jobs.length === 0;
+  const firstJob = jobs[0];
+  connect.title = !firstJob
+    ? '未绑定任务单，无法联通'
+    : `仅联通第一单（按分配先后）${firstJob} 的第一段运输路线` +
+      (permissionsState.junctions ? '' : '；需要 Junctions 权限');
+  connect.addEventListener('click', e => {
+    e.stopPropagation();
+    connectPlayerFirstStage(playerId, connect);
+  });
+  actions.append(connect);
+  card.appendChild(actions);
+
+  const jobContainer = document.createElement('div');
+  jobContainer.className = 'playerCard-jobs';
+  for (const jobId of jobs)
+    jobContainer.appendChild(createJobCard(jobId, 'player'));
+  card.appendChild(jobContainer);
+
+  card.addEventListener('dragover', e => {
+    if (!draggedJobId || !permissionsState.administrator)
+      return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    card.classList.add('drop-active');
+  });
+  card.addEventListener('dragleave', e => {
+    if (!card.contains(e.relatedTarget))
+      card.classList.remove('drop-active');
+  });
+  card.addEventListener('drop', e => {
+    if (!draggedJobId || !permissionsState.administrator)
+      return;
+    e.preventDefault();
+    e.stopPropagation();
+    const jobId = e.dataTransfer.getData('text/plain') || draggedJobId;
+    card.classList.remove('drop-active');
+    const assignment = assignmentsState.byJob.get(jobId);
+    if (assignment && assignment.player === playerId) {
+      endJobDrag();
+      return;
+    }
+    requestAssignment('assign', { job: jobId, player: playerId, playerName: name });
+    endJobDrag();
   });
 
-  return tbody;
+  return card;
+}
+
+function sortPoolJobs(entries) {
+  const pinned = settings.pinnedJob;
+  const order = Array.isArray(settings.jobOrder) ? settings.jobOrder : [];
+  const rank = new Map();
+  order.forEach((jobId, index) => {
+    if (jobId && !rank.has(jobId))
+      rank.set(jobId, index);
+  });
+  return entries.slice().sort((a, b) => {
+    const jobA = a[0];
+    const jobB = b[0];
+    if (jobA === pinned && jobB !== pinned) return -1;
+    if (jobB === pinned && jobA !== pinned) return 1;
+    const rankA = rank.has(jobA) ? rank.get(jobA) : Number.MAX_SAFE_INTEGER;
+    const rankB = rank.has(jobB) ? rank.get(jobB) : Number.MAX_SAFE_INTEGER;
+    if (rankA !== rankB) return rankA - rankB;
+    return String(jobA).localeCompare(String(jobB));
+  });
+}
+
+function reorderPoolJob(draggedId, targetId, after) {
+  if (!draggedId || !targetId || draggedId === targetId)
+    return;
+  const visibleOrder = sortPoolJobs(Array.from(allJobData.entries()))
+    .filter(([jobId]) => !assignmentsState.byJob.has(jobId))
+    .map(([jobId]) => jobId);
+  const order = Array.isArray(settings.jobOrder) ? settings.jobOrder.slice() : [];
+  const known = new Set(order);
+  for (const jobId of visibleOrder) {
+    if (!known.has(jobId)) {
+      order.push(jobId);
+      known.add(jobId);
+    }
+  }
+  const from = order.indexOf(draggedId);
+  if (from !== -1)
+    order.splice(from, 1);
+  let targetIndex = order.indexOf(targetId);
+  if (targetIndex === -1)
+    targetIndex = order.length;
+  else if (after)
+    targetIndex++;
+  order.splice(targetIndex, 0, draggedId);
+  settings.jobOrder = order;
+  saveSettings();
+  updateDispatchLists(true);
+}
+
+function updateDispatchLists(forceRender) {
+  if (draggedJobId || cardPointerDown) {
+    // Replacing the dragged element would cancel the drag; defer the rebuild.
+    pendingDispatchRefresh = !!forceRender;
+    return;
+  }
+  const poolJobs = sortPoolJobs(Array.from(allJobData.entries()))
+    .filter(([jobId, jobData]) => !assignmentsState.byJob.has(jobId) && jobMatchesFilter(jobId, jobData));
+  poolList.setItems(poolJobs.map(([jobId]) => ({ key: jobId, jobId, context: 'pool' })), { forceRender: !!forceRender });
+  document.getElementById('dispatchJobCount').textContent = `${poolJobs.length}`;
+
+  const playerIds = Object.keys(lastPlayerData)
+    .sort((a, b) => playerDisplayName(a).localeCompare(playerDisplayName(b)) || a.localeCompare(b));
+  playersList.setItems(playerIds.map(playerId => ({ key: playerId, playerId })), { forceRender: !!forceRender });
+  if (selectedJobId)
+    markSelectedJobCards(selectedJobId);
 }
 
 function updateCarJobs() {
   carJobIds.clear();
   allJobData.forEach((jobData, jobId) => {
-    jobData.tasks.forEach(task => {
-      task.cars.forEach(carId => {
-        carJobIds.set(carId, jobId);
-      });
-    })
+    (jobData.tasks || []).forEach(task => {
+      (task.cars || []).forEach(carId => carJobIds.set(carId, jobId));
+    });
   });
-  for ([carId, _] of allCarData) {
+  for (const [carId] of allCarData) {
     updateCarRow(carId);
     updateCarMarker(carId);
   }
 }
 
 function updateJobListColors() {
-  for (const elem of jobListBody.querySelectorAll('th.jobList-jobHeader')) {
-    elem.style.background = colorForJobId(elem.textContent);
-  }
+  updateDispatchLists(true);
 }
 
-function updateJobList() {
-  for (const elem of Array.from(jobListBody.childNodes))
-    elem.remove();
-  const sortedJobs = Array.from(allJobData.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  sortedJobs
-    .filter(([jobId, jobData]) => jobMatchesFilter(jobId, jobData))
-    .forEach(([jobId, jobData]) => jobListBody.appendChild(jobElem(jobId, jobData)));
-}
+let lastJobsSignature = '';
 
 function updateAllJobs(jobs) {
+  const signature = JSON.stringify(jobs || {});
+  if (signature === lastJobsSignature)
+    return;
+  lastJobsSignature = signature;
   allJobData.clear();
-  Object.entries(jobs).forEach(([jobId, jobData]) => allJobData.set(jobId, jobData));
-  updateJobList();
+  Object.entries(jobs || {}).forEach(([jobId, jobData]) => allJobData.set(jobId, jobData));
+  jobRouteCache.clear();
+  if (selectedJobId && !allJobData.has(selectedJobId)) {
+    selectedJobId = null;
+    clearJobSelectionUI();
+  }
+  updateDispatchLists(true);
   updateCarJobs();
+  updateBoundRoutes();
+  if (selectedJobId)
+    drawJobRoute(selectedJobId);
 }
 
 let jobSearchTimeoutId;
 function queueJobUpdate() {
-    if (jobSearchTimeoutId)
-        clearTimeout(jobSearchTimeoutId);
-    jobSearchTimeoutId = setTimeout(updateJobList, 100);
+  if (jobSearchTimeoutId)
+    clearTimeout(jobSearchTimeoutId);
+  jobSearchTimeoutId = setTimeout(() => updateDispatchLists(true), 100);
 }
-document.getElementById('jobSearchText').addEventListener('input', e => {
-    queueJobUpdate();
+document.getElementById('jobSearchText').addEventListener('input', queueJobUpdate);
+document.getElementById('jobActiveOnly').addEventListener('change', queueJobUpdate);
+
+const poolDropZone = poolList.container;
+poolDropZone.addEventListener('dragover', e => {
+  if (!draggedJobId || !permissionsState.administrator)
+    return;
+  if (!assignmentsState.byJob.has(draggedJobId))
+    return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
 });
-document.getElementById('jobActiveOnly').addEventListener('change', e => {
-    queueJobUpdate();
-})
+poolDropZone.addEventListener('drop', e => {
+  if (!draggedJobId || !permissionsState.administrator)
+    return;
+  const jobId = e.dataTransfer.getData('text/plain') || draggedJobId;
+  if (!assignmentsState.byJob.has(jobId))
+    return;
+  e.preventDefault();
+  requestAssignment('unassign', { job: jobId });
+  endJobDrag();
+});
 
 /////////////////////
 // track
 
 const trackPolyLines = new Map();
+const trackCoords = new Map();
 
 function colorForYardId(yardId) {
   switch (yardId) {
@@ -636,6 +1304,13 @@ function createLocation(start, end, mid, a) {
 }
 
 function createTrackLabels(trackId, coords) {
+  if (!Array.isArray(coords) || coords.length < 2)
+    return;
+  if (coords.length < 3) {
+    const angle = (Math.atan2(coords[1][0] - coords[0][0], coords[1][1] - coords[0][1]) * 180 / Math.PI + 270) % 180 - 90;
+    createTrackLabel(trackId, pointLerp(coords[0], coords[1], 0.5), angle);
+    return;
+  }
   const length = pointDistance(coords[0], coords[coords.length - 1]);
   const midIndex = Math.floor(coords.length / 2); 
   const beforeMid = (midIndex % 2 == 1) ? coords[midIndex] : coords[midIndex - 1];
@@ -658,6 +1333,7 @@ const tracksReady = configReady
 .then(resp => resp.json())
 .then(tracks => {
   Object.entries(tracks).forEach(([trackId, coords]) => {
+    trackCoords.set(trackId, coords);
     const isSiding = !trackId.includes('#');
     const polyline = L.polyline(coords, {
       color: isSiding ? 'slategray' : 'lightsteelblue',
@@ -767,7 +1443,7 @@ function fetchStations() {
     stationData = data.stations;
     populateLanguageDropdown(data.languages);
     updateStationLabels();
-    updateJobList();
+    updateDispatchLists(true);
   });
 }
 
@@ -778,7 +1454,7 @@ stationNamesCheckbox.addEventListener('change', e => {
   updateStationLabels();
 });
 
-tracksReady.then(() => fetchStations().catch(() => {}));
+tracksReady.then(() => fetchStations().catch(() => {})).catch(() => {});
 
 /////////////////////
 // junctions
@@ -789,8 +1465,9 @@ const junctionsReady = tracksReady
 .then(resp => resp.json())
 .then(allJunctionData =>
   junctions = allJunctionData.map((data, index) => ({
-    marker: createJunctionMarker(data.position, index),
+    position: data.position,
     branches: data.branches,
+    marker: createJunctionMarker(data.position, index),
   }))
 );
 
@@ -827,14 +1504,19 @@ function createJunctionOverlay(junctionId) {
 }
 
 function updateJunctionOverlay(junctionId, selectedBranch) {
-  const junction = junctions[junctionId]
+  const junction = junctions[junctionId];
+  if (!junction)
+    return;
   junction.marker.getElement().innerHTML = createJunctionShape(selectedBranch) + createJunctionLabel(junctionId);
-  const selectedTrackId = junction.branches[selectedBranch]
-  trackPolyLines.get(selectedTrackId).setStyle({ color: 'steelblue', dashArray: null });
-  const unselectedTrackPolyLine = trackPolyLines.get(junction.branches[1-selectedBranch]);
-  unselectedTrackPolyLine
-    .setStyle({ color: 'lightsteelblue', dashArray: "6 12" })
-    .bringToBack();
+  (junction.branches || []).forEach((trackId, branch) => {
+    const polyline = trackPolyLines.get(trackId);
+    if (!polyline)
+      return;
+    if (branch === selectedBranch)
+      polyline.setStyle({ color: 'steelblue', dashArray: null });
+    else
+      polyline.setStyle({ color: 'lightsteelblue', dashArray: '6 12' }).bringToBack();
+  });
 }
 
 function getJunctionOverlayBounds(position) {
@@ -857,27 +1539,482 @@ function updateAllJunctions(states) {
 }
 
 /////////////////////
-// following
+// job routes
 
-function followCar(carId, shouldScroll) {
-  setMarkerToFollow(carMarkers.get(carId));
+let topology = null;
+let portGraph = null;
+let trackGraph = null;
+let trackGraphBuild = null;
 
+const topologyReady = Promise.all([tracksReady, junctionsReady])
+.then(() => fetch(new URL('/topology', location)))
+.then(resp => resp.ok ? resp.json() : null)
+.catch(() => null)
+.then(data => {
+  topology = data && data.coords && data.junctions ? data : null;
+  if (topology) {
+    for (const [trackId, coords] of Object.entries(topology.coords)) {
+      trackCoords.set(trackId, coords);
+      const polyline = trackPolyLines.get(trackId);
+      if (polyline)
+        polyline.setLatLngs(coords);
+    }
+  }
+  return topology;
+});
+
+function ensureTrackGraph() {
+  if (!trackGraphBuild)
+    trackGraphBuild = topologyReady
+    .then(() => {
+      trackGraph = RouteLib.buildTrackGraph(Object.fromEntries(trackCoords), junctions);
+      portGraph = topology ? RouteLib.buildPortGraph(topology) : null;
+      return { trackGraph: trackGraph, portGraph: portGraph };
+    })
+    .catch(err => {
+      trackGraphBuild = null;
+      throw err;
+    });
+  return trackGraphBuild;
+}
+
+const jobRouteCache = new Map();
+let selectedJobRouteLine = null;
+const boundRouteGroup = L.featureGroup().addTo(map);
+
+function routeTracksObject() {
+  return (topology && topology.coords) ? topology.coords : Object.fromEntries(trackCoords);
+}
+
+function computeStageRoute(jobId, stageIndex) {
+  const jobData = allJobData.get(jobId);
+  const task = jobData && jobData.tasks ? jobData.tasks[stageIndex] : null;
+  if (!task || !task.startTrack || !task.destinationTrack)
+    return null;
+  const cacheKey = `${jobId}\u0001${stageIndex}`;
+  if (jobRouteCache.has(cacheKey))
+    return jobRouteCache.get(cacheKey);
+  if (!portGraph && !trackGraph) {
+    ensureTrackGraph().catch(() => {});
+    return undefined;
+  }
+
+  if (portGraph) {
+    const portRoute = RouteLib.findPortRoute(portGraph, task.startTrack, task.destinationTrack);
+    if (portRoute) {
+      const coords = RouteLib.assemblePortRouteCoords(portRoute, routeTracksObject());
+      if (coords.length > 0) {
+        const junctionInfo = RouteLib.junctionsForPortRoute(portRoute);
+        const route = {
+          trackIds: portRoute.trackIds,
+          coords: coords,
+          junctions: junctionInfo.pairs,
+          conflicts: junctionInfo.conflicts,
+        };
+        jobRouteCache.set(cacheKey, route);
+        return route;
+      }
+    }
+    // A real topology exists but this stage is unreachable in it. Do not fall
+    // back to distance-guessed edges, which could invent a physically invalid route.
+    jobRouteCache.set(cacheKey, null);
+    return null;
+  }
+
+  if (trackGraph) {
+    const tracksObj = routeTracksObject();
+    const trackIds = RouteLib.findRoute(trackGraph, task.startTrack, task.destinationTrack);
+    if (trackIds) {
+      const coords = RouteLib.assembleRouteCoords(trackIds, tracksObj, trackGraph, junctions);
+      if (coords.length > 0) {
+        const route = {
+          trackIds: trackIds,
+          coords: coords,
+          junctions: RouteLib.junctionsForRoute(trackIds, junctions, trackGraph, tracksObj),
+          conflicts: [],
+        };
+        jobRouteCache.set(cacheKey, route);
+        return route;
+      }
+    }
+  }
+
+  jobRouteCache.set(cacheKey, null);
+  return null;
+}
+
+function computeJobRoute(jobId) {
+  if (jobRouteCache.has(jobId))
+    return jobRouteCache.get(jobId);
+  const jobData = allJobData.get(jobId);
+  if (!jobData)
+    return undefined;
+  if (!portGraph && !trackGraph) {
+    ensureTrackGraph().catch(() => {});
+    return undefined;
+  }
+  const parts = [];
+  const tasks = jobData.tasks || [];
+  for (let i = 0; i < tasks.length; i++) {
+    const stage = computeStageRoute(jobId, i);
+    if (stage)
+      parts.push(stage);
+  }
+  const route = parts.length > 0 ? { parts: parts } : null;
+  jobRouteCache.set(jobId, route);
+  return route;
+}
+
+function routeAllCoords(route) {
+  if (!route || !route.parts) return [];
+  const coords = [];
+  for (const part of route.parts)
+    for (const point of part.coords)
+      coords.push(point);
+  return coords;
+}
+
+function removeJobRouteLine() {
+  if (selectedJobRouteLine) {
+    selectedJobRouteLine.remove();
+    selectedJobRouteLine = null;
+  }
+}
+
+function drawJobRoute(jobId) {
+  removeJobRouteLine();
+  const route = computeJobRoute(jobId);
+  if (!route || !route.parts || route.parts.length === 0)
+    return;
+  selectedJobRouteLine = L.featureGroup();
+  const claimed = new Set();
+  for (const part of route.parts) {
+    if (!part.coords || part.coords.length < 2)
+      continue;
+    addDedupedSegments(selectedJobRouteLine, part.coords, claimed);
+  }
+  selectedJobRouteLine.addTo(map);
+}
+
+function segmentKey(a, b) {
+  const ka = `${a[0].toFixed(7)},${a[1].toFixed(7)}`;
+  const kb = `${b[0].toFixed(7)},${b[1].toFixed(7)}`;
+  return ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+}
+
+function addDedupedSegments(group, coords, claimed) {
+  let run = [];
+  function flush() {
+    if (run.length >= 2) {
+      L.polyline(run, {
+        color: settings.routeColor,
+        opacity: settings.routeOpacity,
+        weight: settings.trackWidth + 2,
+        interactive: false,
+      }).addTo(group);
+    }
+    run = [];
+  }
+  for (let i = 1; i < coords.length; i++) {
+    const a = coords[i - 1];
+    const b = coords[i];
+    const key = segmentKey(a, b);
+    if (claimed.has(key)) {
+      flush();
+      continue;
+    }
+    claimed.add(key);
+    if (run.length === 0)
+      run.push(a);
+    run.push(b);
+  }
+  flush();
+}
+
+function updateBoundRoutes() {
+  boundRouteGroup.clearLayers();
+  if (!portGraph && !trackGraph) {
+    ensureTrackGraph()
+      .then(() => updateBoundRoutes())
+      .catch(() => {});
+    return;
+  }
+  const claimed = new Set();
+  const ordered = Array.from(assignmentsState.byJob.values())
+    .filter(assignment => allJobData.has(assignment.jobId) && assignment.jobId !== selectedJobId)
+    .sort((a, b) => a.order - b.order);
+  for (const assignment of ordered) {
+    const route = computeJobRoute(assignment.jobId);
+    if (!route || !route.parts)
+      continue;
+    for (const part of route.parts) {
+      if (part.coords && part.coords.length >= 2)
+        addDedupedSegments(boundRouteGroup, part.coords, claimed);
+    }
+  }
+  if (selectedJobRouteLine)
+    selectedJobRouteLine.bringToFront();
+}
+
+function showJunctionButtonFeedback(button, text) {
+  button.textContent = text;
+  clearTimeout(button.feedbackTimerId);
+  button.feedbackTimerId = setTimeout(() => {
+    if (button.isConnected)
+      button.textContent = '一键联通';
+  }, 2200);
+}
+
+function connectPlayerFirstStage(playerId, button) {
+  const jobId = firstStageJobForPlayer(playerId);
+  if (!jobId) {
+    showDispatchMessage('该玩家没有绑定任务单。', true);
+    return;
+  }
+  if (!portGraph && !trackGraph) {
+    button.textContent = '…';
+    ensureTrackGraph()
+      .then(() => {
+        if (button.isConnected)
+          connectPlayerFirstStage(playerId, button);
+      })
+      .catch(() => showJunctionButtonFeedback(button, '✗ 失败'));
+    return;
+  }
+
+  const route = computeStageRoute(jobId, 0);
+  if (!route) {
+    showJunctionButtonFeedback(button, '✗ 首段不可达');
+    showDispatchMessage(`第一单 ${jobId} 的第一段运输路线不可用，未切换道岔。`, true);
+    return;
+  }
+  if (route.conflicts && route.conflicts.length > 0) {
+    showJunctionButtonFeedback(button, '✗ 道岔冲突');
+    showDispatchMessage('第一段路线要求同一道岔处于不同分支，已阻止联通。', true);
+    return;
+  }
+  const pairs = RouteLib.formatJunctionPairs(route.junctions);
+  if (!pairs) {
+    showJunctionButtonFeedback(button, '✓ 无需切换');
+    return;
+  }
+  fetch(new URL(`/junction/set?pairs=${encodeURIComponent(pairs)}`, location), { method: 'POST' })
+  .then(async resp => {
+    if (resp.status == 403) {
+      showJunctionButtonFeedback(button, '✗ 无权限');
+      showDispatchMessage('没有 Junctions 权限，无法切换道岔。', true);
+      return;
+    }
+    if (!resp.ok) {
+      showJunctionButtonFeedback(button, '✗ 失败');
+      return;
+    }
+    const result = await resp.json();
+    const failures = [];
+    let successes = 0;
+    for (const expected of route.junctions) {
+      const actual = result.find(r => r.junctionId == expected.junctionId);
+      if (actual && actual.selectedBranch == expected.branch && actual.success !== false)
+        successes++;
+      else
+        failures.push({ expected: expected, actual: actual });
+    }
+    if (failures.length === 0) {
+      showJunctionButtonFeedback(button, `✓ 已联通 ${successes}`);
+      return;
+    }
+    const detail = failures
+      .map(f => `J-${f.expected.junctionId}(期望 ${f.expected.branch}，实际 ${f.actual ? f.actual.selectedBranch : '无'})`)
+      .join('，');
+    showJunctionButtonFeedback(button, successes > 0 ? `⚠ 部分 ${successes}/${route.junctions.length}` : '✗ 失败');
+    showDispatchMessage(`道岔未全部联通：${detail}`, true);
+    console.warn('[RemoteDispatch] 道岔联通未完全生效:', failures, result);
+  })
+  .catch(() => showJunctionButtonFeedback(button, '✗ 失败'));
+}
+
+/////////////////////
+// following & job selection
+
+function clearCarHighlight() {
   for (const row of carListBody.querySelectorAll('.following'))
     row.classList.remove('following');
-  const carListRow = document.getElementById(`carList-${carId}`)
-  carListRow.classList.add('following');
-  if (shouldScroll)
-    carListRow.scrollIntoView({ block: 'center' });
-
-  for (const elem of jobListBody.querySelectorAll('.following'))
+  for (const elem of document.querySelectorAll('.jobCard .following'))
     elem.classList.remove('following');
-  const jobListElems = jobListBody.querySelectorAll(`.jobList-carCell-${carId}`);
-  for (const elem of jobListElems) {
-    elem.classList.add('following');
-    elem.closest('tbody').classList.add('following');
+}
+
+function selectJobCar(carId) {
+  clearCarHighlight();
+  const carListRow = document.getElementById(`carList-${carId}`);
+  if (carListRow)
+    carListRow.classList.add('following');
+  for (const elem of document.querySelectorAll('.jobCard-car')) {
+    if (elem.textContent === carId) {
+      elem.classList.add('following');
+      elem.closest('.jobCard-carRow')?.classList.add('following');
+      elem.closest('.jobCard')?.classList.add('following');
+    }
   }
-  if (shouldScroll && jobListElems.length > 0)
-    jobListElems[0].scrollIntoView({ block: 'center' });
+}
+
+function followCar(carId, shouldScroll) {
+  const jobId = carJobIds.get(carId);
+  if (jobId && selectedJobId !== jobId)
+    selectJob(jobId, { frame: false });
+  selectJobCar(carId);
+  setMarkerToFollow(carMarkers.get(carId));
+  if (shouldScroll) {
+    const carListRow = document.getElementById(`carList-${carId}`);
+    if (carListRow)
+      carListRow.scrollIntoView({ block: 'center' });
+    const jobId = carJobIds.get(carId);
+    if (jobId) {
+      const assignment = assignmentsState.byJob.get(jobId);
+      if (assignment)
+        playersList.scrollToKey(assignment.player);
+      else
+        poolList.scrollToKey(jobId);
+      requestAnimationFrame(() => {
+        for (const elem of document.querySelectorAll('.jobCard-car')) {
+          if (elem.textContent === carId) {
+            elem.scrollIntoView({ block: 'center' });
+            break;
+          }
+        }
+      });
+    }
+  }
+}
+
+let selectedJobId = null;
+let selectedJobCarId = null;
+
+function clearJobSelectionUI() {
+  selectedJobCarId = null;
+  for (const elem of document.querySelectorAll('.jobCard-selected'))
+    elem.classList.remove('jobCard-selected');
+  removeJobRouteLine();
+  clearCarHighlight();
+}
+
+function mapSidebarOffset() {
+  const sidebarEl = document.getElementById('sidebar');
+  if (!sidebarEl || sidebarEl.classList.contains('collapsed'))
+    return 0;
+  const width = sidebarEl.getBoundingClientRect().width;
+  return Math.min(width, map.getSize().x * 0.45);
+}
+
+function frameMapBounds(bounds, options) {
+  if (!bounds || !bounds.isValid())
+    return false;
+  const size = map.getSize();
+  const offset = mapSidebarOffset();
+  const pad = RouteLib.viewPaddingForSize(Math.max(80, size.x - offset), size.y);
+  map.fitBounds(bounds, {
+    paddingTopLeft: [pad[0] + offset, pad[1]],
+    paddingBottomRight: pad,
+    maxZoom: (options && options.maxZoom) || MAX_ZOOM,
+  });
+  return true;
+}
+
+function boundsForJobs(jobIds, includeRoutes) {
+  const bounds = new L.LatLngBounds();
+  let hasCars = false;
+  for (const jobId of jobIds) {
+    const jobData = allJobData.get(jobId);
+    if (!jobData)
+      continue;
+    for (const task of (jobData.tasks || [])) {
+      for (const carId of (task.cars || [])) {
+        const carData = allCarData.get(carId);
+        if (!carData)
+          continue;
+        hasCars = true;
+        bounds.extend(getCarFrameBounds(carData));
+      }
+    }
+  }
+  if (hasCars)
+    return bounds;
+
+  if (includeRoutes) {
+    for (const jobId of jobIds) {
+      const route = computeJobRoute(jobId);
+      if (!route || !route.parts)
+        continue;
+      for (const point of routeAllCoords(route))
+        bounds.extend(point);
+    }
+  }
+  return bounds;
+}
+
+function frameJobs(jobIds) {
+  return frameMapBounds(boundsForJobs(jobIds, true));
+}
+
+function frameJob(jobId) {
+  return frameJobs([jobId]);
+}
+
+function framePlayerJobs(playerId) {
+  stopFollowing();
+  const jobs = assignedJobsForPlayer(playerId);
+  if (jobs.length > 0 && frameJobs(jobs))
+    return;
+  const marker = playerMarkers.get(playerId);
+  if (marker)
+    map.setView(marker.getLatLng(), initialZoom);
+}
+
+function markSelectedJobCards(jobId) {
+  for (const elem of document.querySelectorAll('.jobCard'))
+    elem.classList.toggle('jobCard-selected', elem.dataset.jobId === jobId);
+}
+
+function selectJob(jobId, options) {
+  const jobData = allJobData.get(jobId);
+  if (!jobData)
+    return;
+  const opts = options || {};
+  clearJobSelectionUI();
+  selectedJobId = jobId;
+  stopFollowing();
+  markSelectedJobCards(jobId);
+  const tasks = jobData.tasks || [];
+  const consistTask = tasks[RouteLib.pickConsistTask(tasks)];
+  if (consistTask && (consistTask.cars || []).length > 0) {
+    selectedJobCarId = consistTask.cars[RouteLib.middleCarIndex(consistTask.cars.length)];
+    selectJobCar(selectedJobCarId);
+  } else {
+    selectedJobCarId = null;
+  }
+  drawJobRoute(jobId);
+  updateBoundRoutes();
+  if (!portGraph && !trackGraph) {
+    ensureTrackGraph()
+    .then(() => {
+      if (selectedJobId == jobId) {
+        drawJobRoute(jobId);
+        updateBoundRoutes();
+      }
+    })
+    .catch(() => {});
+  }
+  if (opts.frame !== false)
+    frameJob(jobId);
+}
+
+function toggleJobSelection(jobId) {
+  if (selectedJobId == jobId) {
+    selectedJobId = null;
+    clearJobSelectionUI();
+    updateBoundRoutes();
+  } else {
+    selectJob(jobId);
+  }
 }
 
 /////////////////////
@@ -924,13 +2061,28 @@ function updatePlayerOverlays(data) {
       }
     }
   });
-  updatePlayerList();
+  updateDispatchListsIfPlayersChanged();
+}
+
+let lastPlayerListSignature = '';
+function updateDispatchListsIfPlayersChanged() {
+  const signature = Object.keys(lastPlayerData)
+    .sort()
+    .map(id => `${id}:${lastPlayerData[id].displayName || ''}:${getPlayerColor(lastPlayerData[id]) || ''}`)
+    .join('|');
+  if (signature === lastPlayerListSignature)
+    return;
+  lastPlayerListSignature = signature;
+  updateDispatchLists(true);
 }
 
 function removePlayerOverlay(id) {
   const marker = playerMarkers.get(id);
-  if (marker)
+  if (marker) {
+    if (markerToFollow === marker)
+      markerToFollow = null;
     marker.remove();
+  }
   playerMarkers.delete(id);
 }
 
@@ -975,53 +2127,6 @@ function createPlayerMarker(id, playerData) {
   .addTo(map));
 }
 
-const playerListBody = document.getElementById('playerListBody');
-const playerListRows = new Map();
-
-function updatePlayerList() {
-  for (const [id, entry] of Array.from(playerListRows.entries())) {
-    if (!lastPlayerData.hasOwnProperty(id)) {
-      entry.row.remove();
-      playerListRows.delete(id);
-    }
-  }
-  Object.keys(lastPlayerData).forEach(id => {
-    const data = lastPlayerData[id];
-    const name = data.displayName || id;
-    const color = getPlayerColor(data) || 'transparent';
-    let entry = playerListRows.get(id);
-    if (!entry) {
-      const row = document.createElement('tr');
-      row.setAttribute('id', `playerList-${id}`);
-      row.classList.add('interactive');
-      const cell = document.createElement('td');
-      const swatch = document.createElement('span');
-      swatch.className = 'playerColorSwatch';
-      const label = document.createElement('span');
-      cell.append(swatch, label);
-      row.appendChild(cell);
-      row.addEventListener('click', () => {
-        const m = playerMarkers.get(id);
-        if (m) {
-          stopFollowing();
-          map.setView(m.getLatLng(), initialZoom);
-        }
-      });
-      playerListBody.appendChild(row);
-      entry = { row, swatch, label, name: undefined, color: undefined };
-      playerListRows.set(id, entry);
-    }
-    if (entry.name !== name) {
-      entry.label.textContent = name;
-      entry.name = name;
-    }
-    if (entry.color !== color) {
-      entry.swatch.style.background = color;
-      entry.color = color;
-    }
-  });
-}
-
 function scrollToTrack(trackId) {
   stopFollowing();
   const polyLine = trackPolyLines.get(trackId);
@@ -1036,11 +2141,26 @@ fetch(new URL('/player', location))
   zoomToAllPlayers();
 });
 
+fetch(new URL('/permissions', location))
+.then(resp => resp.ok ? resp.json() : null)
+.then(data => applyPermissions(data))
+.catch(() => {});
+
+fetch(new URL('/assignments', location))
+.then(resp => resp.ok ? resp.json() : null)
+.then(data => applyAssignmentSnapshot(data))
+.catch(() => {});
+
 /////////////////////
 // loco control
+// Remote locomotive control is disabled in this release. Keep the
+// implementation for a future re-enable, but do not refresh or send commands.
+const locoControlEnabled = false;
 
 const locoIdSelect = document.getElementById('locoControlLocoId');
 function updateLocoList() {
+  if (!locoControlEnabled)
+    return;
   for (const elem of Array.from(locoIdSelect.children))
     elem.remove();
   const locoIds = Array.from(allCarData.entries())
@@ -1141,6 +2261,8 @@ function updateLocoThrottleInput(carData) {
 }
 
 function updateLocoDisplay() {
+  if (!locoControlEnabled)
+    return;
   getControlledLocoData()
   .then(carData => {
     locoBrakePipeDisplay.textContent = carData.brakePipe.toFixed(1);
@@ -1157,6 +2279,8 @@ let locoControlRefreshIntervalId;
 locoIdSelect.addEventListener('change', updateLocoDisplay);
 sidebar.on("content", e => {
   clearInterval(locoControlRefreshIntervalId);
+  if (!locoControlEnabled)
+    return;
   if (e.id == "locoControlTab") {
     locoControlRefreshIntervalId = setInterval(updateLocoDisplay, 1000 / 9);
   }
@@ -1167,6 +2291,8 @@ sidebar.on("closing", e => {
 })
 
 function sendLocoCommand(command) {
+  if (!locoControlEnabled)
+    return;
   const guid = getControlledLocoGuid();
   if (guid) {
     fetch(new URL(`/car/${guid}/control?${command}`, location), { method: 'POST' });
@@ -1301,6 +2427,16 @@ function getCarOverlayBounds(carData) {
   return [ [ position[0] - width/2, position[1] - length/2], [position[0] + width/2, position[1] + length/2] ];
 }
 
+function getCarFrameBounds(carData) {
+  const position = carData.position;
+  const halfLength = metersToDegrees * carData.length / 2;
+  const halfWidth = metersToDegrees * carWidthMeters / 2;
+  const angle = (carData.rotation || 0) * Math.PI / 180;
+  const halfLat = Math.abs(halfLength * Math.cos(angle)) + Math.abs(halfWidth * Math.sin(angle));
+  const halfLng = Math.abs(halfLength * Math.sin(angle)) + Math.abs(halfWidth * Math.cos(angle));
+  return [[position[0] - halfLat, position[1] - halfLng], [position[0] + halfLat, position[1] + halfLng]];
+}
+
 function createNewCar(carId, carData) {
   allCarData.set(carId, carData);
   createCarRow(carId);
@@ -1308,7 +2444,12 @@ function createNewCar(carId, carData) {
     createCarOverlay(carId, carData),
     getCarOverlayBounds(carData),
     { interactive: true, bubblingMouseEvents: false })
-    .addEventListener('mouseup', e => followCar(carId, true))
+    .addEventListener('click', e => {
+      L.DomEvent.stopPropagation(e);
+      if (performance.now() - lastMapDragEnd < 250)
+        return;
+      followCar(carId, true);
+    })
     .addTo(map);
   carMarkers.set(carId, overlay);
   updateCarMarker(carId);
@@ -1324,6 +2465,8 @@ function removeCar(carId) {
   removeCarRow(carId);
   const marker = carMarkers.get(carId);
   if (marker) {
+    if (markerToFollow === marker)
+      markerToFollow = null;
     marker.remove();
     carMarkers.delete(carId);
   }
@@ -1363,45 +2506,61 @@ let updateStart;
 function updateOnce() {
   updateStart = performance.now();
   return fetch(new URL(`/updates/${sessionId}`, location))
-  .then(resp => resp.json())
+  .then(resp => {
+    if (!resp.ok)
+      throw new Error(`Updates failed: ${resp.status}`);
+    return resp.json();
+  })
   .then(updateData => {
-    Object.entries(updateData).forEach(([tag, data]) => {
-      switch (tag) {
-      case 'cars':
-        updateAllCars(data);
-        break;
-      case 'jobs':
-        updateAllJobs(data);
-        break;
-      case 'junctions':
-        updateAllJunctions(data);
-        break;
-      case 'player':
-        updatePlayerOverlays(data);
-        break;
-      default:
-        const segments = tag.split('-');
-        switch (segments[0]) {
-        case 'trainset': updateCars(data); break;
-        case 'carguid': updateCar(data.id, data); break;
+    for (const [tag, data] of Object.entries(updateData)) {
+      // One malformed tag must not prevent the rest of this batch (and later
+      // polling rounds) from being applied.
+      try {
+        switch (tag) {
+        case 'cars':
+          updateAllCars(data);
+          break;
+        case 'jobs':
+          updateAllJobs(data);
+          break;
+        case 'junctions':
+          updateAllJunctions(data);
+          break;
+        case 'player':
+          updatePlayerOverlays(data);
+          break;
+        case 'assignments':
+          applyAssignmentSnapshot(data);
+          break;
+        case 'permissions':
+          applyPermissions(data);
+          break;
+        default:
+          const segments = tag.split('-');
+          switch (segments[0]) {
+          case 'trainset': updateCars(data); break;
+          case 'carguid': updateCar(data.id, data); break;
+          }
         }
+      } catch (err) {
+        console.warn(`[RemoteDispatch] failed to apply update '${tag}':`, err);
       }
-    });
+    }
   })
   .then(_ => {
-    if (markerToFollow)
-      map.panTo(getMarkerCenter(markerToFollow));
+    if (markerToFollow && markerToFollow._map)
+      map.panTo(getMarkerCenter(markerToFollow), { animate: false });
   });
 }
 
 function updateLoop() {
   updateOnce()
+  .catch(err => console.warn('[RemoteDispatch] update failed:', err))
   .then(_ => {
-    const timeToNextUpdate = (updateStart + updateInterval) - performance.now();
+    const timeToNextUpdate = Math.max(0, (updateStart + updateInterval) - performance.now());
     setTimeout(updateLoop, timeToNextUpdate);
   });
 }
 
-junctionsReady.then(_ => {
-  updateLoop();
-});
+Promise.allSettled([tracksReady, junctionsReady])
+  .then(() => updateLoop());
