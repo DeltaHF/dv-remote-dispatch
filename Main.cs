@@ -108,6 +108,7 @@ namespace DvMod.RemoteDispatch_BT
         private static void Start()
         {
             RailTracks.ResetCache();
+            RailSigns.ResetCache();
             Sessions.Reset();
             DispatchAssignments.BeginWorld();
             HttpServer.Create();
@@ -122,6 +123,7 @@ namespace DvMod.RemoteDispatch_BT
             Updater.Destroy();
             HttpServer.Destroy();
             RailTracks.ResetCache();
+            RailSigns.ResetCache();
             Sessions.Reset();
         }
 

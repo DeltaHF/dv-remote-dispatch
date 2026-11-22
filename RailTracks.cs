@@ -64,7 +64,7 @@ namespace DvMod.RemoteDispatch_BT
             junctionPointJson = null;
         }
 
-        private static string TrackId(RailTrack track)
+        internal static string TrackId(RailTrack track)
         {
             return track.LogicTrack().ID.FullDisplayID;
         }

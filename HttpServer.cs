@@ -129,6 +129,9 @@ namespace DvMod.RemoteDispatch_BT
                 Render200(context, ContentTypes.Json, JsonConvert.SerializeObject(
                     await Updater.RunOnMainThread(() => StationData.GetStationData(context.Request.QueryString["lang"])).ConfigureAwait(false)));
                 break;
+            case "railSigns":
+                Render200(context, ContentTypes.Json, await RailSigns.GetSignsJSON().ConfigureAwait(false));
+                break;
             case "track":
                 Render200(context, ContentTypes.Json, await RailTracks.GetTrackPointJSON().ConfigureAwait(false));
                 break;
